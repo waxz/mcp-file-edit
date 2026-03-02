@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, AsyncIterator, Iterator
 from datetime import datetime
 
-from file_operations import LocalFileOperations
-from utils import (
+from .file_operations import LocalFileOperations
+from .utils import (
     FILE_OPS, BASE_DIR, CONNECTION_TYPE, PROJECT_DIR,
     is_safe_path, resolve_path, get_file_type,
     get_file_info_async, get_file_info_sync

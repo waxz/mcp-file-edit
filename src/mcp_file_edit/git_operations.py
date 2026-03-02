@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Union
 from datetime import datetime
 
-from file_operations import FileOperationsInterface, LocalFileOperations, SSHFileOperations
+from .file_operations import FileOperationsInterface, LocalFileOperations, SSHFileOperations
 
 
 class GitOperationsInterface:

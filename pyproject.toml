@@ -1,6 +1,4 @@
-[build-system]
-requires = ["setuptools>=45", "wheel"]
-build-backend = "setuptools.build_meta"
+
 
 [project]
 name = "mcp-file-edit"
@@ -27,8 +25,17 @@ classifiers = [
 dependencies = [
     "mcp[cli]>=1.1.0",
     "asyncssh>=2.14.0",
-    "fastmcp==3.0.0"
+    "fastmcp==3.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0"
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+mcp-file-edit = "mcp_file_edit:main"
 
 [project.urls]
 "Homepage" = "https://github.com/patrickomatik/mcp-file-edit"
@@ -43,8 +50,3 @@ dev = [
     "pytest-cov>=4.0",
 ]
 
-[tool.setuptools]
-py-modules = ["server"]
-
-[tool.setuptools.packages.find]
-include = ["server*", "examples*", "tests*"]

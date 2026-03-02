@@ -5,7 +5,7 @@ Git operations tools for MCP file editor
 from pathlib import Path
 from typing import Dict, Any, Optional, Union, List
 
-from utils import get_git_operations
+from .utils import get_git_operations
 
 
 # Tool functions that will be registered with FastMCP

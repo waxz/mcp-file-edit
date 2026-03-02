@@ -41,7 +41,7 @@ pip install -e .
 ### 0. Test
 - start http server
 ```bash
-python ./server.py -t http -P 7000 -H 0.0.0.0 -p /mcp
+mcp-file-edit -t http -P 8000 -H 0.0.0.0 -p /mcp
 ```
 - run test
 ```bash

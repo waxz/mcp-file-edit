@@ -7,9 +7,9 @@ import asyncio
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-from file_operations import LocalFileOperations
-from ssh_manager import SSHConnectionManager
-from utils import (
+from .file_operations import LocalFileOperations
+from .ssh_manager import SSHConnectionManager
+from .utils import (
     FILE_OPS, PROJECT_DIR, SSH_MANAGER, CONNECTION_TYPE,
     BASE_DIR, resolve_path
 )

@@ -11,7 +11,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from server import (
+from mcp_file_edit.server import (
     set_project_directory, ssh_upload, ssh_download, ssh_sync,
     list_files, read_file, write_file, create_file
 )

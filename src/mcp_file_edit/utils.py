@@ -8,9 +8,9 @@ import mimetypes
 import stat
 from datetime import datetime
 
-from file_operations import FileOperationsInterface, LocalFileOperations
-from ssh_manager import SSHConnectionManager
-from git_operations import GitOperations, LocalGitOperations, SSHGitOperations
+from .file_operations import FileOperationsInterface, LocalFileOperations
+from .ssh_manager import SSHConnectionManager
+from .git_operations import GitOperations, LocalGitOperations, SSHGitOperations
 
 # File type classifications
 TEXT_EXTENSIONS = {

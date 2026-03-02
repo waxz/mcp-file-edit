@@ -12,31 +12,31 @@ from typing import Dict, Any, Optional
 from fastmcp import FastMCP
 
 # Import all utilities and helpers
-from utils import (
+from .utils import (
     BASE_DIR, PROJECT_DIR, FILE_OPS, SSH_MANAGER, CONNECTION_TYPE,
     is_safe_path, resolve_path
 )
-from file_operations import LocalFileOperations, SSHFileOperations
-from ssh_manager import SSHConnectionManager
-from git_operations import LocalGitOperations, SSHGitOperations, GitOperations
+from .file_operations import LocalFileOperations, SSHFileOperations
+from .ssh_manager import SSHConnectionManager
+from .git_operations import LocalGitOperations, SSHGitOperations, GitOperations
 
 # Import tool functions
-from file_tools import (
+from .file_tools import (
     list_files as list_files_, 
     read_file as read_file_, write_file as write_file_, create_file as create_file_,
     delete_file as delete_file_, move_file as move_file_, copy_file as copy_file_, search_files as search_files_,
     replace_in_files as replace_in_files_, patch_file as patch_file_, get_file_info as get_file_info_
 )
 
-from git_tools import (
+from .git_tools import (
     git_status as git_status_, git_init as git_init_, git_clone as git_clone_, git_add as git_add_, git_commit as git_commit_,
     git_push as git_push_, git_pull as git_pull_, git_log as git_log_, git_branch as git_branch_, git_checkout as git_checkout_,
     git_diff as git_diff_, git_remote as git_remote_
 )
-from ssh_tools import (
+from .ssh_tools import (
     ssh_upload as ssh_upload_, ssh_download as ssh_download_, ssh_sync as ssh_sync_
 )
-from code_analyzer import (
+from .code_analyzer import (
     list_functions as list_functions_,
     get_function_at_line as get_function_at_line_,
     get_code_structure as get_code_structure_,
@@ -387,7 +387,7 @@ async def set_project_directory(
     Returns:
         Dictionary with project directory information
     """
-    import utils
+    from . import utils
     
     if connection_type == "ssh":
         # Parse SSH URL if provided
@@ -447,7 +447,7 @@ async def set_project_directory(
     
     else:
         # Local connection
-        import utils
+        from . import utils
         utils.FILE_OPS = LocalFileOperations()
         utils.CONNECTION_TYPE = "local"
         utils.GIT_OPS = None
@@ -478,7 +478,7 @@ async def set_project_directory(
 @mcp.tool()
 async def get_project_directory() -> Dict[str, Any]:
     """Get the current project directory."""
-    import utils
+    from . import utils
     
     if utils.PROJECT_DIR is None:
         return {
@@ -503,9 +503,10 @@ async def get_project_directory() -> Dict[str, Any]:
     
     return result
 
+def main():
 
 # Main entry point
-if __name__ == "__main__":
+# if __name__ == "__main__":
     args = parse_args()
     print(f"Starting MCP server with transport={args.transport}")
     
