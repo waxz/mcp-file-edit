@@ -90,7 +90,8 @@ TEXT_EXTENSIONS = {
     '.sh', '.bash', '.zsh', '.fish', '.ps1', '.bat', '.cmd',
     '.sql', '.r', '.R', '.jl', '.m', '.mat',
     '.tex', '.bib', '.cls', '.sty',
-    '.Dockerfile', '.dockerignore', '.gitignore', '.env'
+    '.Dockerfile', '.dockerignore', '.gitignore', '.env',
+    '.scl', '.st',
 }
 
 BINARY_EXTENSIONS = {

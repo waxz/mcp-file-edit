@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Function-based code analysis capabilities for MCP File Editor
+Supports multiple languages via tree-sitter and regex parsers.
 """
 
 import ast
@@ -12,6 +13,329 @@ from pathlib import Path
 from .utils import resolve_path, is_safe_path
 from .file_tools import walk_with_depth,get_file_type
 
+# Language extension mapping
+LANGUAGE_EXTENSIONS = {
+    # Python
+    '.py': 'python', '.pyw': 'python', '.pyi': 'python',
+    # JavaScript/TypeScript
+    '.js': 'javascript', '.jsx': 'javascript',
+    '.ts': 'typescript', '.tsx': 'typescript',
+    # C/C++
+    '.c': 'c', '.h': 'c',
+    '.cpp': 'cpp', '.cc': 'cpp', '.cxx': 'cpp', '.hpp': 'cpp', '.c++': 'cpp',
+    # Rust
+    '.rs': 'rust',
+    # C#
+    '.cs': 'csharp',
+    # Java
+    '.java': 'java',
+    # SCL / Structured Text (Siemens PLC)
+    '.scl': 'scl', '.st': 'scl',
+    # Go
+    '.go': 'go',
+    # C++/ObjC
+    '.m': 'objc', '.mm': 'objc',
+}
+
+
+# Try to import tree-sitter and language grammars
+TREE_SITTER_AVAILABLE = False
+try:
+    from tree_sitter import Parser, Language
+    TREE_SITTER_AVAILABLE = True
+    
+    # Language grammar imports (these will fail gracefully if not installed)
+    try:
+        import tree_sitter_c
+        LANGUAGE_C_AVAILABLE = True
+    except ImportError:
+        LANGUAGE_C_AVAILABLE = False
+    
+    try:
+        import tree_sitter_cpp
+        LANGUAGE_CPP_AVAILABLE = True
+    except ImportError:
+        LANGUAGE_CPP_AVAILABLE = False
+    
+    try:
+        import tree_sitter_rust
+        LANGUAGE_RUST_AVAILABLE = True
+    except ImportError:
+        LANGUAGE_RUST_AVAILABLE = False
+    
+    try:
+        import tree_sitter_c_sharp
+        LANGUAGE_CSHARP_AVAILABLE = True
+    except ImportError:
+        LANGUAGE_CSHARP_AVAILABLE = False
+    
+    try:
+        import tree_sitter_java
+        LANGUAGE_JAVA_AVAILABLE = True
+    except ImportError:
+        LANGUAGE_JAVA_AVAILABLE = False
+    
+    try:
+        import tree_sitter_javascript
+        LANGUAGE_JAVASCRIPT_AVAILABLE = True
+    except ImportError:
+        LANGUAGE_JAVASCRIPT_AVAILABLE = False
+    
+    try:
+        import tree_sitter_structured_text
+        LANGUAGE_SCL_AVAILABLE = True
+    except ImportError:
+        LANGUAGE_SCL_AVAILABLE = False
+        
+except ImportError:
+    TREE_SITTER_AVAILABLE = False
+    LANGUAGE_C_AVAILABLE = False
+    LANGUAGE_CPP_AVAILABLE = False
+    LANGUAGE_RUST_AVAILABLE = False
+    LANGUAGE_CSHARP_AVAILABLE = False
+    LANGUAGE_JAVA_AVAILABLE = False
+    LANGUAGE_JAVASCRIPT_AVAILABLE = False
+    LANGUAGE_SCL_AVAILABLE = False
+
+
+def get_tree_sitter_parser(language: str) -> Optional[Any]:
+    if not TREE_SITTER_AVAILABLE:
+        return None
+    
+    lang_map = {
+        'c': 'tree_sitter_c', 'cpp': 'tree_sitter_cpp',
+        'rust': 'tree_sitter_rust', 'csharp': 'tree_sitter_c_sharp',
+        'java': 'tree_sitter_java', 'javascript': 'tree_sitter_javascript',
+        'typescript': 'tree_sitter_javascript',
+        'scl': 'tree_sitter_structured_text',
+    }
+    
+    if language not in lang_map:
+        return None
+    
+    try:
+        module_name = lang_map[language]
+        module = __import__(module_name)
+        
+        # Get language object - wrap with Language() constructor
+        from tree_sitter import Language
+        lang_ptr = module.language()  # Returns pointer/capsule
+        lang = Language(lang_ptr)     # Wrap in Language object
+        
+        # Create parser with language
+        parser = Parser(lang)
+        return parser
+        
+    except Exception as e:
+        print(f"[CodeAnalyzer] Error loading {language} parser: {e}")
+        return None
+
+
+class CStyleAnalyzer:
+    """Regex-based analyzer for C/C++."""
+    FUNCTION_PATTERN = r'(?:^|;|\n)\s*([a-zA-Z_][a-zA-Z0-9_*\s]*?)\s+(\w+)\s*\(([^)]*)\)\s*\{'
+    
+    @staticmethod
+    def extract_functions(content: str, language: str) -> List[Dict[str, Any]]:
+        functions = []
+        for match in re.finditer(CStyleAnalyzer.FUNCTION_PATTERN, content, re.MULTILINE):
+            return_type = match.group(1).strip()
+            func_name = match.group(2)
+            params = match.group(3)
+            start_line = content[:match.start()].count('\n') + 1
+            end_line = content[:match.end()].count('\n') + 1
+            functions.append({
+                "name": func_name, "return_type": return_type,
+                "params": params.strip(), "line_start": start_line,
+                "line_end": end_line, "signature": f"{return_type} {func_name}({params})",
+                "source": "regex"
+            })
+        return functions
+
+
+class SCLAnalyzer:
+    """Regex-based analyzer for Siemens SCL (Structured Control Language)."""
+    
+    FUNCTION_PATTERN = r'(?i)^\s*FUNCTION\s+(\w+)\s*:\s*(\w+)\s*$'
+    PROGRAM_PATTERN = r'(?i)^\s*PROGRAM\s+(\w+)\s*$'
+    FUNCTION_BLOCK_PATTERN = r'(?i)^\s*FUNCTION_BLOCK\s+(\w+)\s*$'
+    ACTION_PATTERN = r'(?i)^\s*ACTION\s+(\w+)\s*$'
+    
+    @staticmethod
+    def extract_functions(content: str, language: str) -> List[Dict[str, Any]]:
+        functions = []
+        lines = content.split('\n')
+        
+        for i, line in enumerate(lines):
+            match = re.match(SCLAnalyzer.FUNCTION_PATTERN, line)
+            if match:
+                func_name = match.group(1)
+                return_type = match.group(2)
+                start_line = i + 1
+                end_line = SCLAnalyzer._find_end_line(lines, i, 'END_FUNCTION')
+                functions.append({
+                    "name": func_name,
+                    "return_type": return_type,
+                    "params": "",
+                    "line_start": start_line,
+                    "line_end": end_line,
+                    "signature": f"FUNCTION {func_name} : {return_type}",
+                    "source": "regex"
+                })
+                continue
+            
+            match = re.match(SCLAnalyzer.PROGRAM_PATTERN, line)
+            if match:
+                prog_name = match.group(1)
+                start_line = i + 1
+                end_line = SCLAnalyzer._find_end_line(lines, i, 'END_PROGRAM')
+                functions.append({
+                    "name": prog_name,
+                    "type": "PROGRAM",
+                    "line_start": start_line,
+                    "line_end": end_line,
+                    "signature": f"PROGRAM {prog_name}",
+                    "source": "regex"
+                })
+                continue
+            
+            match = re.match(SCLAnalyzer.FUNCTION_BLOCK_PATTERN, line)
+            if match:
+                fb_name = match.group(1)
+                start_line = i + 1
+                end_line = SCLAnalyzer._find_end_line(lines, i, 'END_FUNCTION_BLOCK')
+                functions.append({
+                    "name": fb_name,
+                    "type": "FUNCTION_BLOCK",
+                    "line_start": start_line,
+                    "line_end": end_line,
+                    "signature": f"FUNCTION_BLOCK {fb_name}",
+                    "source": "regex"
+                })
+                continue
+            
+            match = re.match(SCLAnalyzer.ACTION_PATTERN, line)
+            if match:
+                action_name = match.group(1)
+                start_line = i + 1
+                end_line = SCLAnalyzer._find_end_line(lines, i, 'END_ACTION')
+                functions.append({
+                    "name": action_name,
+                    "type": "ACTION",
+                    "line_start": start_line,
+                    "line_end": end_line,
+                    "signature": f"ACTION {action_name}",
+                    "source": "regex"
+                })
+        
+        return functions
+    
+    @staticmethod
+    def _find_end_line(lines: List[str], start_idx: int, end_keyword: str) -> int:
+        for i in range(start_idx + 1, len(lines)):
+            if re.match(r'(?i)\s*' + end_keyword + r'\b', lines[i]):
+                return i + 1
+        return len(lines)
+
+
+class TreeSitterAnalyzer:
+    @staticmethod
+    def extract_functions(content: str, language: str) -> List[Dict[str, Any]]:
+        parser = get_tree_sitter_parser(language)
+        if parser is not None:
+            try:
+                tree = parser.parse(bytes(content, 'utf8'))
+                functions = []
+                TreeSitterAnalyzer._find_functions(tree.root_node, content, language, functions)
+                if functions:
+                    return functions
+            except Exception as e:
+                print(f"[TreeSitterAnalyzer] tree-sitter failed: {e}")
+        
+        # Fallback to regex for C/C++
+        if language in ['c', 'cpp']:
+            return CStyleAnalyzer.extract_functions(content, language)
+        
+        # Fallback to SCL analyzer for Siemens SCL
+        if language == 'scl':
+            return SCLAnalyzer.extract_functions(content, language)
+        
+        return []
+        try:
+            tree = parser.parse(bytes(content, 'utf8'))
+            functions = []
+            TreeSitterAnalyzer._find_functions(tree.root_node, content, language, functions)
+            return functions
+        except Exception:
+            return []
+    
+    @staticmethod
+    def _find_functions(node, content: str, language: str, functions: List[Dict]):
+        node_types = {
+            'c': ['function_definition', 'function_declaration', 'declaration'],
+            'cpp': ['function_definition', 'function_declaration', 'declaration'],
+            'rust': ['function_item', 'function_declaration'],
+            'csharp': ['method_declaration', 'local_function_statement', 'function_declaration'],
+            'java': ['method_declaration', 'function_declaration'],
+            'javascript': ['function_declaration', 'function_expression', 'arrow_function', 'method_definition'],
+            'typescript': ['function_declaration', 'method_definition', 'arrow_function'],
+            'scl': ['program_definition', 'action_definition', 'call_expression'],
+        }.get(language, [])
+        
+        if node.type in node_types:
+            # Try to extract function name
+            name = None
+            for child in node.children:
+                if child.type == 'identifier':
+                    name = content[child.start_byte:child.end_byte]
+                    if isinstance(name, bytes):
+                        name = name.decode('utf8')
+                    break
+            if not name:
+                # Try to get from function declarator
+                for child in node.children:
+                    if child.type == 'function_declarator':
+                        for subchild in child.children:
+                            if subchild.type == 'identifier':
+                                name = content[subchild.start_byte:subchild.end_byte]
+                                if isinstance(name, bytes):
+                                    name = name.decode('utf8')
+                                break
+                        break
+            if not name:
+                name = f"func_{node.start_point[0]}"
+            
+            functions.append({
+                "name": name,
+                "line_start": node.start_point[0] + 1,
+                "line_end": node.end_point[0] + 1,
+                "node_type": node.type
+            })
+        
+        for child in node.children:
+            TreeSitterAnalyzer._find_functions(child, content, language, functions)
+
+
+class SCLAnalyzer:
+    BLOCK_PATTERNS = {
+        'function': r'(?m)^FUNCTION\s+(\w+)\s*:\s*(\w+)',
+        'function_block': r'(?m)^FUNCTION_BLOCK\s+(\w+)',
+        'program': r'(?m)^PROGRAM\s+(\w+)',
+    }
+    
+    @staticmethod
+    def extract_blocks(content: str) -> List[Dict[str, Any]]:
+        blocks = []
+        for block_type, pattern in SCLAnalyzer.BLOCK_PATTERNS.items():
+            for match in re.finditer(pattern, content):
+                blocks.append({
+                    "type": block_type,
+                    "name": match.group(1),
+                    "return_type": match.group(2) if match.lastindex >= 2 else None,
+                    "line_start": content[:match.start()].count('\n') + 1,
+                    "line_end": content.count('\n') + 1,
+                })
+        return blocks
 
 
 class CodeAnalyzer:
@@ -257,11 +581,8 @@ async def list_functions(
     # Auto-detect language if not specified
     if not language:
         suffix = file_path.suffix.lower()
-        if suffix in ['.py', '.pyw']:
-            language = 'python'
-        elif suffix in ['.js', '.jsx', '.ts', '.tsx']:
-            language = 'javascript'
-        else:
+        language = LANGUAGE_EXTENSIONS.get(suffix, '')
+        if not language:
             raise ValueError(f"Unsupported file type: {suffix}")
     
     # Extract functions based on language
@@ -269,6 +590,10 @@ async def list_functions(
         return CodeAnalyzer.extract_functions_from_python(content)
     elif language in ['javascript', 'typescript']:
         return CodeAnalyzer.extract_functions_from_javascript(content)
+    elif language in ['c', 'cpp', 'rust', 'csharp', 'java']:
+        return TreeSitterAnalyzer.extract_functions(content, language)
+    elif language == 'scl':
+        return SCLAnalyzer.extract_blocks(content)
     else:
         raise ValueError(f"Unsupported language: {language}")
 
@@ -322,17 +647,15 @@ async def get_code_structure(
     # Auto-detect language if not specified
     if not language:
         suffix = file_path.suffix.lower()
-        if suffix in ['.py', '.pyw']:
-            language = 'python'
-        elif suffix in ['.js', '.jsx', '.ts', '.tsx']:
-            language = 'javascript'
-        else:
+        language = LANGUAGE_EXTENSIONS.get(suffix, '')
+        if not language:
             raise ValueError(f"Unsupported file type: {suffix}")
     
     structure = {
         "language": language,
         "file": str(file_path.name),
-        "lines": len(content.splitlines())
+        "lines": len(content.splitlines()),
+        "tree_sitter_available": TREE_SITTER_AVAILABLE
     }
     
     if language == 'python':
@@ -341,7 +664,10 @@ async def get_code_structure(
         structure["functions"] = CodeAnalyzer.extract_functions_from_python(content)
     elif language in ['javascript', 'typescript']:
         structure["functions"] = CodeAnalyzer.extract_functions_from_javascript(content)
-        # TODO: Add JS/TS import and class extraction
+    elif language in ['c', 'cpp', 'rust', 'csharp', 'java']:
+        structure["functions"] = TreeSitterAnalyzer.extract_functions(content, language)
+    elif language == 'scl':
+        structure["blocks"] = SCLAnalyzer.extract_blocks(content)
     
     return structure
 
@@ -395,11 +721,8 @@ async def search_functions(
         try:
             # Get language from file extension
             suffix = file_path.suffix.lower()
-            if suffix in ['.py', '.pyw']:
-                language = 'python'
-            elif suffix in ['.js', '.jsx', '.ts', '.tsx']:
-                language = 'javascript'
-            else:
+            language = LANGUAGE_EXTENSIONS.get(suffix)
+            if not language:
                 continue
             
             # Get functions from file

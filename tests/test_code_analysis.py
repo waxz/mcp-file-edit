@@ -11,12 +11,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 async def test_code_analysis():
     # Import the tools
-    from server import (
-        list_functions, get_function_at_line, 
-        get_code_structure, search_functions,
-        set_project_directory, create_file
+    from mcp_file_edit.server import (
+    set_project_directory, ssh_upload, ssh_download, ssh_sync,
+    list_files, read_file, write_file, create_file
     )
-    
+    from mcp_file_edit.code_analyzer import (
+    list_functions, get_function_at_line, 
+    get_code_structure, search_functions
+    )
     # Create test files
     print("=== Testing Code Analysis Features ===\n")
     
@@ -132,9 +134,134 @@ class MyClass {
     for func in js_functions:
         print(f"   - {func['name']} at line {func['line_start']}")
     print()
+
+
+    test_scl_content='''// SCL test file
+PROGRAM Main
+    VAR
+        result : INT;
+    END_VAR
     
-    # Test 5: Search for functions
-    print("5. Search for functions matching 'function':")
+    result := Add(5, 3);
+    result := Multiply(6, 7);
+END_PROGRAM
+
+FUNCTION Add : INT
+    VAR_INPUT
+        a : INT;
+        b : INT;
+    END_VAR
+    // Debug: log the addition
+    Add := a + b;
+END_FUNCTION
+
+FUNCTION Multiply : INT
+    VAR_INPUT
+        a : INT;
+        b : INT;
+    END_VAR
+    // Debug: log the multiplication
+    Multiply := a * b;
+END_FUNCTION
+'''
+
+    await create_file("test_analysis.scl", test_scl_content)
+
+    # Test 5: List SCL functions
+    print("5. List functions in SCL file:")
+    scl_functions = await list_functions("test_analysis.scl", "scl")
+    for func in scl_functions:
+        print(f"   - {func['name']} at line {func['line_start']}")
+    print()
+
+    # Test 6: Rust
+    test_rust_content='''// Rust test file
+fn regular_function(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+const arrow_function = (x: i32) => x * 2;
+
+async fn async_function() -> i32 {
+    return await Promise.resolve(42);
+}
+
+class MyClass {
+    constructor() {
+        this.value = 0;
+    }
+    
+    method() {
+        return this.value;
+    }
+}
+'''
+    
+    await create_file("test_analysis.rs", test_rust_content)
+    
+    # Test 6: List Rust functions
+    print("6. List functions in Rust file:")
+    rust_functions = await list_functions("test_analysis.rs", "rust")
+    for func in rust_functions:
+        print(f"   - {func['name']} at line {func['line_start']}")
+    print()
+
+
+    # Test C++
+    test_c_content = '''// C++ test file
+int regular_function(int a, int b) {
+    return a + b;
+}
+
+const arrow_function = (x: int) => x * 2;
+
+async fn async_function() -> int {
+    return await Promise.resolve(42);
+}
+
+class MyClass {
+    constructor() {
+        this.value = 0;
+    }
+    
+    method() {
+        return this.value;
+    }
+}
+'''
+    
+    await create_file("test_analysis.cpp", test_c_content)
+    
+    # Test 7: List C++ functions
+    print("7. List functions in C++ file:")
+    c_functions = await list_functions("test_analysis.cpp", "cpp")
+    for func in c_functions:
+        print(f"   - {func['name']} at line {func['line_start']}")
+    print()
+
+
+    # Test C
+    test_c_content = '''// C test file
+int regular_function(int a, int b) {
+    return a + b;
+}
+int main(){
+    printf("Hello, World!\n");
+    return 0;  
+}
+'''
+    
+    await create_file("test_analysis.c", test_c_content)
+    
+    # Test 8: List C functions
+    print("8. List functions in C file:")
+    c_functions = await list_functions("test_analysis.c", "c")
+    for func in c_functions:
+        print(f"   - {func['name']} at line {func['line_start']}")
+    print()
+    
+    # Test 9: Search for functions
+    print("9. Search for functions matching 'function':")
     results = await search_functions("function", ".", "*.py", max_depth=2)
     print(f"   Found {results['total_functions']} matching functions in {results['files_searched']} files")
     for result in results['results']:
@@ -143,8 +270,8 @@ class MyClass {
             print(f"     - {func['name']}")
     print()
     
-    # Test 6: Search with pattern
-    print("6. Search for async functions:")
+    # Test 10: Search with pattern
+    print("10. Search for async functions:")
     results = await search_functions("async", ".", "*.py")
     for result in results['results']:
         for func in result['functions']:
@@ -154,7 +281,12 @@ class MyClass {
     # Cleanup
     os.remove("test_analysis.py")
     os.remove("test_analysis.js")
+    os.remove("test_analysis.scl")
+    os.remove("test_analysis.rs")   
+    os.remove("test_analysis.cpp")
+    os.remove("test_analysis.c")    
     
+
     print("\n=== Code Analysis Tests Complete ===")
     print("Features tested:")
     print("- List all functions with signatures and line numbers")
