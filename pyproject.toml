@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-file-edit"
-version = "1.1.0"
+version = "1.1.1"
 description = "A powerful MCP server for comprehensive file system operations"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Patrick Omatik", email = ""},
+    {name = "Patrick Omatik", email = "test@github.com"},
 ]
 keywords = ["mcp", "file-editor", "llm", "ai", "claude", "filesystem"]
 classifiers = [
@@ -27,6 +27,7 @@ classifiers = [
 dependencies = [
     "mcp[cli]>=1.1.0",
     "asyncssh>=2.14.0",
+    "fastmcp==3.0.0"
 ]
 
 [project.urls]

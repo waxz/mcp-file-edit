@@ -16,6 +16,7 @@ A simple Model Context Protocol (MCP) server that provides comprehensive file sy
 - 📤 **SSH Transfer**: Upload/download files and efficient rsync synchronization
 - 📤 **SSH Upload/Download**: Transfer files between local and remote filesystems
 - 🔀 **Git Operations**: Full git support for both local and remote repositories
+- 🌐 **HTTP Transport** : Support HTTP Transport (Streamable), HTTP transport turns your MCP server into a web service accessible via a URL.
 
 ## Installation
 
@@ -36,6 +37,16 @@ pip install -e .
 ```
 
 ## Quick Start
+
+### 0. Test
+- start http server
+```bash
+python ./server.py -t http -P 7000 -H 0.0.0.0 -p /mcp
+```
+- run test
+```bash
+python ./test.py
+```
 
 ### 1. Configure Claude Desktop
 
