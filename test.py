@@ -11,10 +11,18 @@ async def call_tool(name: str):
         print(result)
         result = await client.call_tool("read_file", {"path": "/workspaces/mcp-file-edit/README.md"})
         print(result)
-        
-        result = await client.call_tool("set_project_directory", {"path": "/workspaces/mcp-file-edit"})
+        # result = await client.call_tool("read_file", {"path": "../README.md"})
+        # print(result)
+        result = await client.call_tool("set_project_directory", {"path": "."})
 
-        result = await client.call_tool("git_status", {"path": "/workspaces/mcp-file-edit"})
+        result = await client.call_tool("git_status", {"path": "."})
+
+        # result = await client.call_tool("set_project_directory", {"path": "/workspaces/mcp-file-edit/src"})
+        
+        result = await client.call_tool("list_files", {"path": "."})
         print(result)
+
+        # result = await client.call_tool("git_status", {"path": "/workspaces/mcp-file-edit"})
+        # print(result)
         
 asyncio.run(call_tool("Ford"))

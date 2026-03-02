@@ -43,7 +43,7 @@ BINARY_EXTENSIONS = {
 BASE_DIR = Path.cwd()
 
 # Global project directory (optional, for project-relative paths)
-PROJECT_DIR: Optional[Path] = None
+PROJECT_DIR: Optional[Path] = BASE_DIR
 
 # Global file operations backend and SSH manager
 FILE_OPS: FileOperationsInterface = LocalFileOperations()
