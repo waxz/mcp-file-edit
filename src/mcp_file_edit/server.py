@@ -12,9 +12,10 @@ from typing import Dict, Any, Optional
 from fastmcp import FastMCP
 
 # Import all utilities and helpers
+# Import path normalization functions for cross-platform compatibility
 from .utils import (
     BASE_DIR, PROJECT_DIR, FILE_OPS, SSH_MANAGER, CONNECTION_TYPE,
-    is_safe_path, resolve_path
+    is_safe_path, resolve_path, normalize_path, normalize_absolute_path
 )
 from .file_operations import LocalFileOperations, SSHFileOperations
 from .ssh_manager import SSHConnectionManager
@@ -23,15 +24,32 @@ from .git_operations import LocalGitOperations, SSHGitOperations, GitOperations
 # Import tool functions
 from .file_tools import (
     list_files as list_files_, 
-    read_file as read_file_, write_file as write_file_, create_file as create_file_,
-    delete_file as delete_file_, move_file as move_file_, copy_file as copy_file_, search_files as search_files_,
-    replace_in_files as replace_in_files_, patch_file as patch_file_, get_file_info as get_file_info_
+    read_file as read_file_, 
+    write_file as write_file_, 
+    create_file as create_file_,
+    delete_file as delete_file_, 
+    move_file as move_file_, 
+    copy_file as copy_file_, 
+    search_files as search_files_,
+    replace_in_files as replace_in_files_, 
+    patch_file as patch_file_, 
+    get_file_info as get_file_info_
 )
 
+
 from .git_tools import (
-    git_status as git_status_, git_init as git_init_, git_clone as git_clone_, git_add as git_add_, git_commit as git_commit_,
-    git_push as git_push_, git_pull as git_pull_, git_log as git_log_, git_branch as git_branch_, git_checkout as git_checkout_,
-    git_diff as git_diff_, git_remote as git_remote_
+    git_status as git_status_, 
+    git_init as git_init_, 
+    git_clone as git_clone_, 
+    git_add as git_add_, 
+    git_commit as git_commit_,
+    git_push as git_push_, 
+    git_pull as git_pull_, 
+    git_log as git_log_, 
+    git_branch as git_branch_, 
+    git_checkout as git_checkout_,
+    git_diff as git_diff_, 
+    git_remote as git_remote_
 )
 from .ssh_tools import (
     ssh_upload as ssh_upload_, ssh_download as ssh_download_, ssh_sync as ssh_sync_
@@ -73,7 +91,7 @@ async def greet(name: str) -> str:
 @mcp.tool()
 async def bye(name: str) -> str:
     """Say goodbye to someone."""
-    return f"Bye, {name}!"
+    return f"Goodbye, {name}!"
 
 
 # File Management Tools
@@ -385,7 +403,7 @@ async def set_project_directory(
         ssh_key_filename: Path to SSH private key file
         
     Returns:
-        Dictionary with project directory information
+        Dictionary with project directory information (using normalized paths)
     """
     from . import utils
     
@@ -430,13 +448,14 @@ async def set_project_directory(
             if not await utils.FILE_OPS.is_dir(utils.PROJECT_DIR):
                 raise ValueError(f"Remote path is not a directory: {path}")
             
+            # Return normalized paths for cross-platform compatibility
             return {
-                "project_directory": str(utils.PROJECT_DIR),
+                "project_directory": normalize_path(utils.PROJECT_DIR),
                 "connection_type": "ssh",
                 "ssh_host": ssh_host,
                 "ssh_username": ssh_username,
                 "ssh_port": ssh_port,
-                "absolute_path": str(utils.PROJECT_DIR)
+                "absolute_path": normalize_absolute_path(utils.PROJECT_DIR)
             }
             
         except Exception as e:
@@ -467,11 +486,12 @@ async def set_project_directory(
         
         utils.PROJECT_DIR = project_path
         
+        # Return normalized paths for cross-platform compatibility
         return {
-            "project_directory": str(utils.PROJECT_DIR),
+            "project_directory": normalize_path(utils.PROJECT_DIR),
             "connection_type": "local",
-            "relative_to_base": str(utils.PROJECT_DIR.relative_to(utils.BASE_DIR)),
-            "absolute_path": str(utils.PROJECT_DIR.absolute())
+            "relative_to_base": normalize_path(utils.PROJECT_DIR.relative_to(utils.BASE_DIR)),
+            "absolute_path": normalize_absolute_path(utils.PROJECT_DIR)
         }
 
 
@@ -487,15 +507,16 @@ async def get_project_directory() -> Dict[str, Any]:
             "message": "No project directory set. Use set_project_directory to set one."
         }
     
+    # Return normalized paths for cross-platform compatibility
     result = {
-        "project_directory": str(utils.PROJECT_DIR),
+        "project_directory": normalize_path(utils.PROJECT_DIR),
         "connection_type": utils.CONNECTION_TYPE,
-        "absolute_path": str(utils.PROJECT_DIR.absolute())
+        "absolute_path": normalize_absolute_path(utils.PROJECT_DIR)
     }
     
     # Add local-specific info
     if utils.CONNECTION_TYPE == "local":
-        result["relative_to_base"] = str(utils.PROJECT_DIR.relative_to(utils.BASE_DIR))
+        result["relative_to_base"] = normalize_path(utils.PROJECT_DIR.relative_to(utils.BASE_DIR))
         result["exists"] = utils.PROJECT_DIR.exists()
     else:
         # For SSH, we're already connected
@@ -503,10 +524,9 @@ async def get_project_directory() -> Dict[str, Any]:
     
     return result
 
-def main():
 
-# Main entry point
-# if __name__ == "__main__":
+def main():
+    """Main entry point for the MCP server."""
     args = parse_args()
     print(f"Starting MCP server with transport={args.transport}")
     
@@ -514,3 +534,7 @@ def main():
         mcp.run()
     elif args.transport == "http":
         mcp.run(transport="http", port=args.port, host=args.host, path=args.path)
+
+
+if __name__ == "__main__":
+    main()

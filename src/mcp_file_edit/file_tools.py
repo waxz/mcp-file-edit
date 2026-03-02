@@ -867,6 +867,58 @@ async def replace_in_files(
     }
 
 
+def normalize_patch(patch: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize patch keys to support common naming conventions.
+    
+    Converts various key names to standard keys expected by FilePatcher:
+    - oldText/newText -> find/replace
+    - old_string/new_string -> find/replace  
+    - old/new -> find/replace
+    - search/replace -> find/replace
+    - before/after -> find/replace
+    - text/replace -> find/replace
+    """
+    normalized = patch.copy()
+    
+    if "find" in normalized:
+        return normalized
+    
+    if "text" in normalized and "replace" in normalized:
+        normalized["find"] = normalized.pop("text")
+        return normalized
+    
+    if "oldText" in normalized:
+        normalized["find"] = normalized.pop("oldText")
+        if "newText" in normalized:
+            normalized["replace"] = normalized.pop("newText")
+        return normalized
+    
+    if "old_string" in normalized:
+        normalized["find"] = normalized.pop("old_string")
+        if "new_string" in normalized:
+            normalized["replace"] = normalized.pop("new_string")
+        return normalized
+    
+    if "old" in normalized:
+        normalized["find"] = normalized.pop("old")
+        if "new" in normalized:
+            normalized["replace"] = normalized.pop("new")
+        return normalized
+    
+    if "search" in normalized:
+        normalized["find"] = normalized.pop("search")
+        return normalized
+    
+    if "before" in normalized:
+        normalized["find"] = normalized.pop("before")
+        if "after" in normalized:
+            normalized["replace"] = normalized.pop("after")
+        return normalized
+    
+    return normalized
+
+
 async def patch_file(
     path: str,
     patches: List[Dict[str, Any]],
@@ -887,6 +939,9 @@ async def patch_file(
     Returns:
         Dict with success status, patches applied, backup path, and change details
     """
+    # Normalize patches to support common naming conventions
+    patches = [normalize_patch(p) for p in patches]
+    
     file_path = resolve_path(path)
     
     # For local connections, check if path is safe

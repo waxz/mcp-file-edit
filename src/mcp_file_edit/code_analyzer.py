@@ -8,6 +8,12 @@ import re
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
+# Import local modules
+from .utils import resolve_path, is_safe_path
+from .file_tools import walk_with_depth,get_file_type
+
+
+
 class CodeAnalyzer:
     """Analyzes code files to extract function and structure information"""
     
@@ -236,7 +242,6 @@ async def list_functions(
     Returns:
         List of function information including name, line numbers, signature, etc.
     """
-    from server import resolve_path, is_safe_path, get_file_type
     
     file_path = resolve_path(path)
     if not is_safe_path(file_path):
@@ -302,7 +307,6 @@ async def get_code_structure(
     Returns:
         Dictionary containing imports, classes, functions, and other structural elements
     """
-    from server import resolve_path, is_safe_path
     
     file_path = resolve_path(path)
     if not is_safe_path(file_path):
@@ -362,8 +366,7 @@ async def search_functions(
     Returns:
         Dictionary with search results
     """
-    from server import resolve_path, is_safe_path, walk_with_depth
-    import re
+
     
     search_path = resolve_path(path)
     if not is_safe_path(search_path):
