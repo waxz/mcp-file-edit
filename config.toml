@@ -1,0 +1,4 @@
+[server]
+# Allowed local roots for set_project_directory.
+# Use absolute paths. Relative paths are resolved from process cwd.
+allow_directories = ["."]

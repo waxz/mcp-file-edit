@@ -4,6 +4,7 @@ Shared utilities and configuration for MCP file editor
 
 import os
 import sys
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any
 import mimetypes
@@ -13,6 +14,7 @@ from datetime import datetime
 from .file_operations import FileOperationsInterface, LocalFileOperations
 from .ssh_manager import SSHConnectionManager
 from .git_operations import GitOperations, LocalGitOperations, SSHGitOperations
+from .config import get_runtime_config
 
 
 # =============================================================================
@@ -103,10 +105,10 @@ BINARY_EXTENSIONS = {
     '.ttf', '.otf', '.woff', '.woff2', '.eot'
 }
 
-# Global base directory (current working directory)
+# Global base directory (startup cwd; retained for compatibility in outputs/tests)
 BASE_DIR = Path.cwd()
 
-# Global project directory (optional, for project-relative paths)
+# Global project directory: single authoritative local root for path safety/routing
 PROJECT_DIR: Optional[Path] = BASE_DIR
 
 # Global file operations backend and SSH manager
@@ -115,41 +117,88 @@ SSH_MANAGER = SSHConnectionManager()
 CONNECTION_TYPE = "local"  # "local" or "ssh"
 GIT_OPS: Optional[GitOperations] = None  # Initialized when needed
 
+UNSAFE_PATH_CHARS = {"|", "&", ";", "`", "$", ">", "<", "\x00", "\n", "\r"}
+
+
+def validate_path_input(path: str) -> None:
+    """Reject path strings that contain shell/control metacharacters."""
+    if any(ch in path for ch in UNSAFE_PATH_CHARS):
+        raise ValueError("Invalid path: unsafe characters detected")
+
+    # Cross-platform style guards:
+    # - Linux/WSL/macOS: reject Windows-style paths (backslashes, drive letter, UNC)
+    # - Windows: reject POSIX-style absolute paths (/...)
+    if os.name != "nt":
+        if "\\" in path or re.match(r"^[A-Za-z]:[\\/]", path) or path.startswith("\\\\"):
+            raise ValueError("Invalid path: Windows-style paths are not allowed on this platform")
+    else:
+        if path.startswith("/"):
+            raise ValueError("Invalid path: POSIX absolute paths are not allowed on this platform")
+
+
+def get_allow_directories() -> list[Path]:
+    """
+    Get allowed local root directories for set_project_directory.
+
+    Reads runtime config loaded from config.toml / CLI.
+    Defaults to BASE_DIR when unset or empty.
+    """
+    roots = [root.resolve() for root in get_runtime_config().allow_directories]
+    if not roots:
+        return [BASE_DIR.resolve()]
+
+    # Preserve order, remove duplicates
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(root)
+    return unique
+
+
+def is_within_allowed_directories(path: Path, allowed_roots: list[Path]) -> bool:
+    """Return True if path is inside at least one allowed root."""
+    try:
+        resolved = path.resolve()
+        for root in allowed_roots:
+            try:
+                if resolved.is_relative_to(root.resolve()):
+                    return True
+            except (ValueError, RuntimeError):
+                continue
+        return False
+    except (ValueError, RuntimeError):
+        return False
+
 
 def is_safe_path(path: Path) -> bool:
     """
     Check if a path is safe to access (no directory traversal).
     
     Security logic:
-    - For SSH connections: paths are remote, skip local BASE_DIR check
-    - For local connections with PROJECT_DIR set: check against PROJECT_DIR
-    - For local connections without PROJECT_DIR: check against BASE_DIR
+    - For SSH connections: paths are remote, skip local boundary checks
+    - For local connections: enforce path within PROJECT_DIR
     """
     # For SSH connections, paths are on remote server - skip local path check
     if CONNECTION_TYPE == "ssh":
         return True
     
     try:
+        if PROJECT_DIR is None:
+            return False
         resolved = path.resolve()
-        
-        # If PROJECT_DIR is set and is within BASE_DIR, check against PROJECT_DIR
-        if PROJECT_DIR and PROJECT_DIR != BASE_DIR:
-            try:
-                project_resolved = PROJECT_DIR.resolve()
-                if project_resolved.is_relative_to(BASE_DIR):
-                    return resolved.is_relative_to(project_resolved)
-            except (ValueError, RuntimeError):
-                pass
-        
-        # Otherwise check against BASE_DIR
-        return resolved.is_relative_to(BASE_DIR)
+        project_resolved = PROJECT_DIR.resolve()
+        return resolved.is_relative_to(project_resolved)
     except (ValueError, RuntimeError):
         return False
 
 
 def resolve_path(path: str) -> Path:
     """
-    Resolve a path relative to project directory if set, otherwise relative to BASE_DIR.
+    Resolve a path relative to PROJECT_DIR for local/SSH operations.
     
     Args:
         path: Input path (can be relative or absolute)
@@ -159,45 +208,17 @@ def resolve_path(path: str) -> Path:
         
     Security:
         - For SSH: absolute paths are allowed (remote paths)
-        - For local: absolute paths must be within PROJECT_DIR or BASE_DIR
+        - For local: validation is handled by is_safe_path against PROJECT_DIR
     """
+    validate_path_input(path)
     path_obj = Path(path)
     
-    # If path is absolute
     if path_obj.is_absolute():
-        # For SSH connections, return as-is (remote paths)
-        if CONNECTION_TYPE == "ssh":
-            return path_obj
-        
-        # For local connections, validate against PROJECT_DIR or BASE_DIR
-        try:
-            resolved = path_obj.resolve()
-            
-            # Check against PROJECT_DIR if it's within BASE_DIR
-            if PROJECT_DIR and PROJECT_DIR != BASE_DIR:
-                try:
-                    project_resolved = PROJECT_DIR.resolve()
-                    if project_resolved.is_relative_to(BASE_DIR):
-                        if resolved.is_relative_to(project_resolved):
-                            return path_obj
-                        # Not within PROJECT_DIR, try BASE_DIR as fallback
-                except (ValueError, RuntimeError):
-                    pass
-            
-            # Check against BASE_DIR
-            if resolved.is_relative_to(BASE_DIR):
-                return path_obj
-            
-            # Path escapes BASE_DIR - return anyway but it will fail is_safe_path
-            return path_obj
-        except (ValueError, RuntimeError):
-            return path_obj
-    
-    # If project directory is set, resolve relative to it
+        return path_obj
+
     if PROJECT_DIR:
         return PROJECT_DIR / path
-    
-    # Otherwise, resolve relative to BASE_DIR
+
     return BASE_DIR / path
 
 
@@ -244,9 +265,9 @@ async def get_file_info_async(path: Path) -> Dict[str, Any]:
         # Cross-platform: use normalized paths instead of platform-specific paths
         # This fixes the issue where Windows paths (C:\...) cause errors on Linux
         if CONNECTION_TYPE == "local":
-            info["absolute_path"] = normalize_absolute_path(path, BASE_DIR)
+            info["absolute_path"] = normalize_absolute_path(path, PROJECT_DIR)
             try:
-                info["relative_path"] = normalize_path(path.relative_to(BASE_DIR))
+                info["relative_path"] = normalize_path(path.relative_to(PROJECT_DIR))
             except ValueError:
                 info["relative_path"] = normalize_path(path)
         
@@ -283,7 +304,7 @@ def get_file_info_sync(path: Path) -> Dict[str, Any]:
         info = {
             "name": path.name,
             # Return relative path when possible (works best across platforms)
-            "path": normalize_absolute_path(path, BASE_DIR),
+            "path": normalize_absolute_path(path, PROJECT_DIR),
             # Also provide normalized absolute path
             "absolute_path": normalize_absolute_path(path),
             "type": "directory" if path.is_dir() else "file",

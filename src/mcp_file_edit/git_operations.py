@@ -6,6 +6,7 @@ Provides git functionality for both local and remote (SSH) repositories.
 import asyncio
 import os
 import re
+import shlex
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Union
 from datetime import datetime
@@ -70,12 +71,12 @@ class SSHGitOperations(GitOperationsInterface):
     
     async def run_git_command(self, command: List[str], cwd: Optional[Path] = None) -> Tuple[str, str, int]:
         """Run a git command on remote server via SSH."""
-        # Build the full command
-        full_command = 'git ' + ' '.join(f'"{arg}"' if ' ' in arg else arg for arg in command)
+        quoted_args = " ".join(shlex.quote(arg) for arg in command)
+        full_command = f"git {quoted_args}"
         
         # Add cd to working directory if specified
         if cwd:
-            full_command = f'cd "{cwd}" && {full_command}'
+            full_command = f"cd {shlex.quote(str(cwd))} && {full_command}"
         
         # Run the command
         result = await self.conn.run(full_command, check=False)
@@ -447,15 +448,52 @@ class GitOperations:
                     url: Optional[str] = None, path: Optional[Path] = None) -> Dict[str, Any]:
         """Manage git remotes."""
         work_dir = path or self.project_dir
-        
-        if action == "add" and name and url:
-            command = ['remote', 'add', name, url]
-        elif action == "remove" and name:
-            command = ['remote', 'remove', name]
-        elif action == "get-url" and name:
-            command = ['remote', 'get-url', name]
-        else:
+
+        if action == "list":
             command = ['remote', '-v']
+        elif action == "add":
+            if not name or not url:
+                return {
+                    "success": False,
+                    "action": action,
+                    "error": "name and url are required for action='add'",
+                    "returncode": 2,
+                }
+            command = ['remote', 'add', name, url]
+        elif action == "remove":
+            if not name:
+                return {
+                    "success": False,
+                    "action": action,
+                    "error": "name is required for action='remove'",
+                    "returncode": 2,
+                }
+            command = ['remote', 'remove', name]
+        elif action == "get-url":
+            if not name:
+                return {
+                    "success": False,
+                    "action": action,
+                    "error": "name is required for action='get-url'",
+                    "returncode": 2,
+                }
+            command = ['remote', 'get-url', name]
+        elif action == "set-url":
+            if not name or not url:
+                return {
+                    "success": False,
+                    "action": action,
+                    "error": "name and url are required for action='set-url'",
+                    "returncode": 2,
+                }
+            command = ['remote', 'set-url', name, url]
+        else:
+            return {
+                "success": False,
+                "action": action,
+                "error": f"Unsupported action: {action}",
+                "returncode": 2,
+            }
         
         stdout, stderr, returncode = await self.git_ops.run_git_command(
             command,
@@ -490,5 +528,9 @@ class GitOperations:
             result["url"] = url
         elif action == "remove":
             result["name"] = name
+        elif action in ("get-url", "set-url"):
+            result["name"] = name
+            if url:
+                result["url"] = url
         
         return result

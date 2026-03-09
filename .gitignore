@@ -21,6 +21,7 @@ wheels/
 *.egg
 .agent
 
+.mcp_*
 # Virtual Environment
 venv/
 ENV/

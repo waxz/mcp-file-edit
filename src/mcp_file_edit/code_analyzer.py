@@ -10,8 +10,8 @@ from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
 # Import local modules
-from .utils import resolve_path, is_safe_path
-from .file_tools import walk_with_depth,get_file_type
+from .utils import resolve_path, is_safe_path, get_file_type
+from .file_tools import walk_with_depth
 
 # Language extension mapping
 LANGUAGE_EXTENSIONS = {
