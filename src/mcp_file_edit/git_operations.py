@@ -193,13 +193,15 @@ class GitOperations:
             "returncode": returncode
         }
     
-    async def clone(self, url: str, path: Optional[Path] = None, branch: Optional[str] = None) -> Dict[str, Any]:
+    async def clone(self, url: str, path: Optional[Path] = None, branch: Optional[str] = None, depth: Optional[int] = None) -> Dict[str, Any]:
         """Clone a remote repository."""
         work_dir = path or self.project_dir
         
         command = ['clone', url, str(work_dir)]
         if branch:
             command.extend(['-b', branch])
+        if depth:
+            command.extend(['--depth', str(depth)])
         
         stdout, stderr, returncode = await self.git_ops.run_git_command(command)
         
@@ -208,6 +210,7 @@ class GitOperations:
             "url": url,
             "path": str(work_dir),
             "branch": branch,
+            "depth": depth,
             "stdout": stdout,
             "stderr": stderr,
             "returncode": returncode

@@ -1,5 +1,9 @@
-#!/usr/bin/env python3
-"""Comprehensive MCP tool test runner (valid + invalid params) with report output."""
+"""Integration test runner for shell-mcp-server tools.
+
+Usage:
+  python ./test.py
+  python ./test.py --transport http --url http://localhost:8000/mcp
+"""
 
 from __future__ import annotations
 
@@ -8,14 +12,11 @@ import asyncio
 import json
 import os
 import platform
-import shutil
-import socket
-import subprocess
 import sys
-import threading
-import time
-from dataclasses import dataclass
+import shutil
+import subprocess
 from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,13 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+
+# @dataclass
+# class Scenario:
+#     tool: str
+#     args: dict[str, Any]
+#     expect_error: bool = False
+#     must_contain: str | None = None
 
 @dataclass
 class Scenario:
@@ -48,109 +56,50 @@ class ScenarioResult:
     detail: str = ""
 
 
-def is_wsl() -> bool:
-    if platform.system() != "Linux":
-        return False
-    release = platform.release().lower()
-    if "microsoft" in release:
-        return True
-    proc_version = Path("/proc/version")
-    if proc_version.exists():
-        text = proc_version.read_text(encoding="utf-8", errors="ignore").lower()
-        return "microsoft" in text or "wsl" in text
-    return False
-
-
-class HttpServerRunner:
-    def __init__(self, host: str, port: int, mcp_path: str, allow_directories: str | None, config_path: str | None):
-        self.host = host
-        self.port = port
-        self.mcp_path = mcp_path
-        self.allow_directories = allow_directories
-        self.config_path = config_path
-        self.proc: subprocess.Popen[str] | None = None
-
-    def start(self) -> None:
-        env = os.environ.copy()
-        env["PYTHONPATH"] = str(SRC_DIR) + os.pathsep + env.get("PYTHONPATH", "")
-
-        cmd = [
-            sys.executable,
-            "-m",
-            "mcp_file_edit.server",
-            "-t",
-            "http",
-            "-H",
-            self.host,
-            "-P",
-            str(self.port),
-            "-p",
-            self.mcp_path,
-            "--name",
-            "file-editor-test",
-        ]
-        if self.config_path:
-            cmd.extend(["--config", self.config_path])
-        if self.allow_directories is not None:
-            cmd.extend(["--allow-directories", self.allow_directories])
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True, env=env)
-
-    async def wait_ready(self, timeout_sec: float = 15.0) -> bool:
-        deadline = asyncio.get_event_loop().time() + timeout_sec
-        while asyncio.get_event_loop().time() < deadline:
-            if self.proc and self.proc.poll() is not None:
-                return False
-            try:
-                reader, writer = await asyncio.open_connection(self.host, self.port)
-                writer.close()
-                await writer.wait_closed()
-                return True
-            except Exception:
-                await asyncio.sleep(0.2)
-        return False
-
-    def stop(self) -> None:
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-                self.proc.wait(timeout=2)
-
-
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run full MCP tool tests and generate report")
-    parser.add_argument("--mode", choices=["direct", "http"], default="direct")
-    parser.add_argument("--url", default="http://127.0.0.1:8000/mcp")
-    parser.add_argument("--output", default="report.txt")
-    parser.add_argument("--allow-directories", default=None)
-    parser.add_argument("--config", default="config.toml")
-    parser.add_argument("--http-autostart", action="store_true")
-    parser.add_argument("--http-host", default="127.0.0.1")
-    parser.add_argument("--http-port", type=int, default=8000)
-    parser.add_argument("--http-path", default="/mcp")
-    parser.add_argument("--call-timeout", type=float, default=2.0)
-    parser.add_argument("--max-duration", type=float, default=180.0)
+    parser = argparse.ArgumentParser(description="Shell MCP Server integration tester")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="Client transport target",
+    )
+    parser.add_argument(
+        "--url",
+        default="http://localhost:8000/mcp",
+        help="HTTP MCP endpoint when --transport=http",
+    )
+    parser.add_argument(
+        "--cwd",
+        default=".",
+        help="Working directory for execute_command scenarios",
+    )
+    parser.add_argument(
+        "--shell",
+        default="bash",
+        help="Shell name for execute_command scenarios",
+    )
+    parser.add_argument(
+        "--report",
+        default="report.txt",
+        help="Output report path",
+    )
     return parser.parse_args()
 
 
-def build_client(mode: str, url: str, allow_directories: str | None, config_path: str | None) -> Client:
-    if mode == "http":
+def build_client(transport: str, url: str) -> Client:
+    if transport == "http":
         return Client(url)
+
+    from mcp_file_edit.server import build_server
 
     old_argv = sys.argv[:]
     try:
-        argv = [sys.argv[0]]
-        if config_path:
-            argv.extend(["--config", config_path])
-        if allow_directories is not None:
-            argv.extend(["--allow-directories", allow_directories])
-        sys.argv = argv
-        from mcp_file_edit import server as server_module
+        sys.argv = [sys.argv[0]]
+        server = build_server()
     finally:
         sys.argv = old_argv
-    return Client(server_module.mcp)
+    return Client(server)
 
 
 def extract_text(result: Any) -> str:
@@ -159,65 +108,325 @@ def extract_text(result: Any) -> str:
         text = getattr(content, "text", "")
         if text:
             parts.append(text)
-    if parts:
-        return "\n".join(parts).strip()
-    return str(result).strip()
+    return "\n".join(parts).strip()
 
 
-def parse_json_maybe(text: str) -> Any:
+def _one_line(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _truncate(value: str, limit: int = 72) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: limit - 3] + "..."
+
+
+def _scenario_label(scenario: Scenario) -> str:
+    command = scenario.args.get("command")
+    if isinstance(command, str) and command:
+        return _truncate(_one_line(command))
+    return "-"
+
+
+def _looks_like_error_output(output: str) -> bool:
+    text = output.strip()
+    if text.startswith("Execution failed:"):
+        return True
+    if "[timed out after " in text:
+        return True
+    if "[client disconnected]" in text:
+        return True
+    if "[exit code:" in text:
+        tail = text.rsplit("[exit code:", maxsplit=1)[-1]
+        code_text = tail.split("]", maxsplit=1)[0].strip()
+        try:
+            return int(code_text) != 0
+        except ValueError:
+            return False
+    return False
+
+
+def _row(columns: list[tuple[str, int]]) -> str:
+    parts: list[str] = []
+    for text, width in columns:
+        parts.append(text.ljust(width)[:width])
+    return " | ".join(parts)
+
+
+async def call_tool(client: Client, scenario: Scenario) -> ScenarioResult:
+    label = f"{scenario.tool}({json.dumps(scenario.args, ensure_ascii=False)})"
+    print(f"\n=== {label}")
+
     try:
-        return json.loads(text)
-    except Exception:
-        return None
-
-
-def has_error_result(obj: Any, output: str) -> bool:
-    if isinstance(obj, dict):
-        if obj.get("success") is False:
-            return True
-        if obj.get("error"):
-            return True
-    lower = output.lower()
-    patterns = ["traceback", "exception", "valueerror", "typeerror", "runtimeerror", "invalid path", "not allowed"]
-    return any(p in lower for p in patterns)
-
-
-async def call_tool(client: Client, scenario: Scenario, timeout_s: float) -> ScenarioResult:
-    print(f"\n=== {scenario.tool}({json.dumps(scenario.args, ensure_ascii=False)})")
-    try:
-        effective_timeout = scenario.timeout_s if scenario.timeout_s is not None else timeout_s
-        result = await asyncio.wait_for(client.call_tool(scenario.tool, scenario.args), timeout=effective_timeout)
+        result = await client.call_tool(scenario.tool, scenario.args)
         output = extract_text(result)
-        obj = parse_json_maybe(output)
-        is_error = has_error_result(obj, output)
-
         if scenario.expect_error:
-            if is_error:
-                return ScenarioResult(scenario, True, output=output, detail="expected error observed")
-            return ScenarioResult(scenario, False, output=output, detail="expected error but call looked successful")
-
-        if (not scenario.allow_error_output) and is_error:
-            return ScenarioResult(scenario, False, output=output, detail="unexpected error output")
+            if _looks_like_error_output(output):
+                print(f"EXPECTED ERROR: {output}")
+                return ScenarioResult(
+                    scenario=scenario,
+                    passed=True,
+                    output=output,
+                    detail="expected error matched tool error output",
+                )
+            print("FAILED: expected an error but call succeeded")
+            print("OUTPUT> ",output)
+            return ScenarioResult(
+                scenario=scenario,
+                passed=False,
+                output=output,
+                detail="expected error but call succeeded",
+            )
 
         if scenario.must_contain and scenario.must_contain not in output:
-            return ScenarioResult(scenario, False, output=output, detail=f"missing substring: {scenario.must_contain!r}")
+            print(f"FAILED: expected output to contain: {scenario.must_contain!r}")
+            print("OUTPUT> ",output or "<empty>")
+            return ScenarioResult(
+                scenario=scenario,
+                passed=False,
+                output=output,
+                detail=f"missing expected substring: {scenario.must_contain!r}",
+            )
 
-        if scenario.require_keys and isinstance(obj, dict):
-            missing = [k for k in scenario.require_keys if k not in obj]
-            if missing:
-                return ScenarioResult(scenario, False, output=output, detail=f"missing keys: {missing}")
+        if "No such file or directory" in output:
+            print("FAILED: unexpected path resolution error")
+            print("OUTPUT> ",output)
+            return ScenarioResult(
+                scenario=scenario,
+                passed=False,
+                output=output,
+                detail="unexpected path resolution error",
+            )
 
-        return ScenarioResult(scenario, True, output=output)
+        print("OUTPUT> ",output or "<empty>")
+        return ScenarioResult(scenario=scenario, passed=True, output=output)
     except Exception as exc:  # noqa: BLE001
         if scenario.expect_error:
-            return ScenarioResult(scenario, True, error=str(exc), detail="expected exception")
-        return ScenarioResult(scenario, False, error=str(exc), detail="unexpected exception")
+            print(f"EXPECTED ERROR: {exc}")
+            return ScenarioResult(
+                scenario=scenario,
+                passed=True,
+                error=str(exc),
+                detail="expected exception raised",
+            )
+        print(f"FAILED: {exc}")
+        return ScenarioResult(
+            scenario=scenario,
+            passed=False,
+            error=str(exc),
+            detail="unexpected exception",
+        )
+
+
+def write_report(
+    report_path: Path,
+    args: argparse.Namespace,
+    results: list[ScenarioResult],
+) -> None:
+    passed = sum(1 for item in results if item.passed)
+    total = len(results)
+    failed = [item for item in results if not item.passed]
+
+    lines: list[str] = []
+    lines.append("Shell MCP Server Test Report")
+    lines.append(f"Generated: {datetime.now().isoformat(timespec='seconds')}")
+    lines.append(f"Host OS: {platform.platform()}")
+    lines.append(f"Host System: {platform.system()} {platform.release()}")
+    lines.append(f"Host Machine: {platform.machine()}")
+    lines.append(f"Host CPU: {platform.processor() or 'unknown'}")
+    lines.append(f"CPU Cores (logical): {os.cpu_count()}")
+    lines.append(f"Memory Total: {_get_memory_total_human()}")
+    lines.append(f"Python: {platform.python_version()}")
+    lines.append(f"Transport: {args.transport}")
+    lines.append(f"CWD arg: {args.cwd}")
+    lines.append(f"Shell arg: {args.shell}")
+    lines.append(f"Summary: {passed}/{total} scenarios passed")
+    lines.append("")
+
+    lines.append("Result Table")
+    lines.append("=" * 78)
+    lines.append(
+        _row(
+            [
+                ("#", 3),
+                ("Status", 6),
+                ("Tool", 18),
+                ("Check", 24),
+                ("Case", 22),
+            ]
+        )
+    )
+    lines.append("-" * 78)
+    for idx, item in enumerate(results, start=1):
+        scenario = item.scenario
+        if scenario.expect_error:
+            check = "expect error"
+        elif scenario.must_contain:
+            check = _truncate(f"contains: {scenario.must_contain}", 24)
+        else:
+            check = "normal"
+        lines.append(
+            _row(
+                [
+                    (str(idx), 3),
+                    ("PASS" if item.passed else "FAIL", 6),
+                    (scenario.tool, 18),
+                    (check, 24),
+                    (_scenario_label(scenario), 22),
+                ]
+            )
+        )
+    lines.append("=" * 78)
+    lines.append("")
+
+    lines.append(f"Failed Scenarios: {len(failed)}")
+    if failed:
+        lines.append("-" * 78)
+        for item in failed:
+            scenario = item.scenario
+            lines.append(f"Tool: {scenario.tool}")
+            lines.append(f"Args: {json.dumps(scenario.args, ensure_ascii=False)}")
+            if scenario.must_contain:
+                lines.append(f"Expected contain: {scenario.must_contain}")
+            if scenario.expect_error:
+                lines.append("Expected error: True")
+            if item.detail:
+                lines.append(f"Detail: {item.detail}")
+            if item.error:
+                lines.append(f"Error: {item.error}")
+            if item.output:
+                lines.append("Actual output:")
+                lines.append(item.output)
+            lines.append("-" * 78)
+    lines.append("")
+
+    lines.append("Detailed Results")
+    lines.append("=" * 78)
+
+    for idx, item in enumerate(results, start=1):
+        scenario = item.scenario
+        status = "PASS" if item.passed else "FAIL"
+        lines.append(f"[{idx}] {status} {scenario.tool}")
+        lines.append(f"Args: {json.dumps(scenario.args, ensure_ascii=False)}")
+        lines.append(f"Expect error: {scenario.expect_error}")
+        if scenario.must_contain:
+            lines.append(f"Must contain: {scenario.must_contain}")
+        if item.detail:
+            lines.append(f"Detail: {item.detail}")
+        if item.error:
+            lines.append(f"Error: {item.error}")
+        if item.output:
+            lines.append("Output:")
+            lines.append(item.output)
+        lines.append("-" * 78)
+
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _get_memory_total_human() -> str:
+    """Best-effort total memory detection with stdlib fallbacks."""
+    # Linux / WSL
+    meminfo = Path("/proc/meminfo")
+    if meminfo.exists():
+        try:
+            for line in meminfo.read_text(encoding="utf-8").splitlines():
+                if line.startswith("MemTotal:"):
+                    # Format: MemTotal:  32895332 kB
+                    kb = int(line.split()[1])
+                    return _format_bytes(kb * 1024)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Optional psutil fallback if available in environment.
+    try:
+        import psutil  # type: ignore
+
+        return _format_bytes(int(psutil.virtual_memory().total))
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def _format_bytes(value: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    size = float(value)
+    for unit in units:
+        if size < 1024.0 or unit == units[-1]:
+            return f"{size:.2f} {unit}"
+        size /= 1024.0
+    return f"{value} B"
+
+
+def _is_wsl_runtime() -> bool:
+    if platform.system().lower() != "linux":
+        return False
+    release = platform.release().lower()
+    version = platform.version().lower()
+    return "microsoft" in release or "microsoft" in version
+
+
+def is_wsl() -> bool:
+    return _is_wsl_runtime()
+
+
+def _expected_sandbox_base() -> str:
+    if platform.system().lower().startswith("win"):
+        return "/app"
+    if _is_wsl_runtime():
+        return str(PROJECT_ROOT)
+    return "/workspace"
+
+
+# Keep this as a raw multiline bash script, then normalize to LF for Windows drun.
+human_like_python_project_cmd = r"""
+set -e
+proj=".mcp_human_py"
+
+rm -rf "$proj" && mkdir -p "$proj"
+
+# Avoid single quotes in payload to keep PowerShell -> drun -> bash quoting stable.
+echo "import toml,time" > "$proj/main.py"
+
+echo "data={\"status\": \"success\", \"msg\": \"hello from app\"}" >> "$proj/main.py"
+echo "print(f'data: {data}')" >> "$proj/main.py"
+echo "print(toml.dumps(data))" >> "$proj/main.py"
+
+echo "print('sleep 2')" >> "$proj/main.py"
+
+echo "time.sleep(2)" >> "$proj/main.py"
+
+
+echo "print('sleep 3')" >> "$proj/main.py"
+
+echo "time.sleep(3)" >> "$proj/main.py"
+
+
+echo "print('sleep 1')" >> "$proj/main.py"
+
+echo "time.sleep(1)" >> "$proj/main.py"
+
+
+echo "print('sleep 2')" >> "$proj/main.py"
+
+echo "time.sleep(2)" >> "$proj/main.py"
+
+echo "toml" > "$proj/requirements.txt"
+
+uv pip install -r "$proj/requirements.txt"
+python3 "$proj/main.py"
+""".replace("\r\n", "\n").strip()
+
+
+import os, shutil, stat
+
+def remove_readonly(func, path, _):
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
 
 
 def prepare_workspace() -> dict[str, Path]:
     ws = PROJECT_ROOT / ".workspace/mcp_test_workspace"
     if ws.exists():
-        shutil.rmtree(ws,ignore_errors=True)
+        shutil.rmtree(ws, onerror=remove_readonly)
     ws.mkdir(parents=True, exist_ok=True)
 
     files = ws / "files"
@@ -234,7 +443,9 @@ def prepare_workspace() -> dict[str, Path]:
     (gitrepo / "gitfile.txt").write_text("v1\n", encoding="utf-8")
 
     clone_target = ws / "clone_target"
-    clone_target.mkdir(parents=True, exist_ok=True)
+    if clone_target.exists():
+        shutil.rmtree(clone_target, onerror=remove_readonly)
+    # clone_target.mkdir(parents=True, exist_ok=True)
 
     return {"ws": ws, "files": files, "gitrepo": gitrepo, "clone_target": clone_target}
 
@@ -329,7 +540,8 @@ def build_scenarios(paths: dict[str, Path]) -> list[Scenario]:
 
         # git clone valid/invalid
         Scenario("set project root for clone", "set_project_directory", {"path": ".", "connection_type": "local"}),
-        Scenario("git clone valid", "git_clone", {"url": str(paths["gitrepo"]), "path": clone_rel}, allow_error_output=True, timeout_s=8.0),
+        
+        Scenario("git clone valid", "git_clone", {"url": "https://github.com/marlocarlo/psmux", "path": clone_rel, "depth": 1}, allow_error_output=True, timeout_s=8.0),
         Scenario("git clone invalid", "git_clone", {"url": "not-a-valid-url", "path": f"{clone_rel}_bad"}, expect_error=True),
 
         # ssh tools (no ssh session expected)
@@ -387,189 +599,44 @@ def build_scenarios(paths: dict[str, Path]) -> list[Scenario]:
     return scenarios
 
 
-def _format_bytes(value: int) -> str:
-    units = ["B", "KB", "MB", "GB", "TB"]
-    size = float(value)
-    for unit in units:
-        if size < 1024.0 or unit == units[-1]:
-            return f"{size:.2f} {unit}"
-        size /= 1024.0
-    return f"{value} B"
-
-
-def _get_memory_total_human() -> str:
-    meminfo = Path("/proc/meminfo")
-    if meminfo.exists():
-        for line in meminfo.read_text(encoding="utf-8", errors="ignore").splitlines():
-            if line.startswith("MemTotal:"):
-                kb = int(line.split()[1])
-                return _format_bytes(kb * 1024)
-    return "unknown"
-
-
-def write_report(report_path: Path, args: argparse.Namespace, results: list[ScenarioResult]) -> None:
-    total = len(results)
-    passed = sum(1 for r in results if r.passed)
-    failed = [r for r in results if not r.passed]
-
-    lines: list[str] = []
-    lines.append("# MCP Comprehensive Test Report")
-    lines.append("")
-    lines.append("## Run Config")
-    lines.append(f"- generated: {datetime.now().isoformat(timespec='seconds')}")
-    lines.append(f"- mode: {args.mode}")
-    lines.append(f"- target: {args.url if args.mode == 'http' else args.mode}")
-    lines.append(f"- allow_directories: {args.allow_directories or '(default)'}")
-    lines.append(f"- call_timeout: {args.call_timeout}s")
-    lines.append("")
-
-    lines.append("## Hardware Info")
-    lines.append(f"- hostname: {socket.gethostname()}")
-    lines.append(f"- os: {platform.system()} {platform.release()}")
-    lines.append(f"- platform: {platform.platform()}")
-    lines.append(f"- machine: {platform.machine()}")
-    lines.append(f"- processor: {platform.processor() or 'unknown'}")
-    lines.append(f"- cpu_count: {os.cpu_count()}")
-    lines.append(f"- memory_total: {_get_memory_total_human()}")
-    lines.append(f"- python: {platform.python_version()}")
-    lines.append("")
-
-    lines.append("## Test Result")
-    lines.append("| # | Status | Tool | Case |")
-    lines.append("|---:|:---:|---|---|")
-    for i, item in enumerate(results, start=1):
-        lines.append(f"| {i} | {'PASS' if item.passed else 'FAIL'} | {item.scenario.tool} | {item.scenario.name} |")
-    lines.append("")
-
-    lines.append("## Summary")
-    lines.append(f"- total: {total}")
-    lines.append(f"- passed: {passed}")
-    lines.append(f"- failed: {total - passed}")
-    lines.append(f"- status: {'PASS' if passed == total else 'FAIL'}")
-    lines.append("")
-
-    lines.append("## Fastcheck Table")
-    lines.append("| Metric | Value |")
-    lines.append("|---|---:|")
-    lines.append(f"| Total | {total} |")
-    lines.append(f"| Passed | {passed} |")
-    lines.append(f"| Failed | {total - passed} |")
-    lines.append(f"| Pass Rate | {(passed / total * 100 if total else 0):.1f}% |")
-    lines.append("")
-
-    lines.append("## Failed Details")
-    if not failed:
-        lines.append("- none")
-    else:
-        for item in failed:
-            s = item.scenario
-            lines.append(f"- tool: {s.tool}")
-            lines.append(f"  case: {s.name}")
-            lines.append(f"  args: {json.dumps(s.args, ensure_ascii=False)}")
-            lines.append(f"  expect_error: {s.expect_error}")
-            if item.detail:
-                lines.append(f"  detail: {item.detail}")
-            if item.error:
-                lines.append(f"  error: {item.error}")
-            if item.output:
-                lines.append(f"  output: {item.output[:220].replace(chr(10), ' ')}")
-            lines.append("")
-
-    report_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-
-
-async def run(args: argparse.Namespace) -> int:
-    paths = prepare_workspace()
-
-    http_runner: HttpServerRunner | None = None
-    client: Client | None = None
-    client_entered = False
-    if args.mode == "http" and args.http_autostart:
-        http_runner = HttpServerRunner(args.http_host, args.http_port, args.http_path, args.allow_directories, args.config)
-        http_runner.start()
-        if not await http_runner.wait_ready():
-            http_runner.stop()
-            raise RuntimeError("HTTP MCP server did not become ready in time")
-        args.url = f"http://{args.http_host}:{args.http_port}{args.http_path}"
-
+async def run_scenarios(args: argparse.Namespace) -> int:
+    client = build_client(args.transport, args.url)
+ 
+    path = prepare_workspace()
+    scenarios =build_scenarios(path)
+ 
     results: list[ScenarioResult] = []
-    try:
-        client = build_client(args.mode, args.url, args.allow_directories, args.config)
-        scenarios = build_scenarios(paths)
-        await asyncio.wait_for(client.__aenter__(), timeout=10.0)
-        client_entered = True
-        started = time.monotonic()
-        for sc in scenarios:
-            if (time.monotonic() - started) > args.max_duration:
-                results.append(
-                    ScenarioResult(
-                        scenario=Scenario("Global Timeout", "runner", {}),
-                        passed=False,
-                        detail=f"max duration exceeded ({args.max_duration:.1f}s), stopped early",
-                    )
-                )
-                break
-            try:
-                scenario_total_timeout = (sc.timeout_s if sc.timeout_s is not None else args.call_timeout) + 1.5
-                res = await asyncio.wait_for(call_tool(client, sc, args.call_timeout), timeout=scenario_total_timeout)
-            except asyncio.TimeoutError:
-                res = ScenarioResult(
-                    scenario=sc,
-                    passed=False,
-                    detail=f"scenario timed out after {scenario_total_timeout:.1f}s",
-                )
-            results.append(res)
-    except Exception as exc:  # noqa: BLE001
-        results.append(
-            ScenarioResult(
-                scenario=Scenario("Connection", "client", {}),
-                passed=False,
-                error=str(exc),
-                detail="failed to initialize/connect client",
-            )
-        )
-    finally:
-        # FastMCP HTTP teardown can block indefinitely in this stress runner.
-        # For HTTP mode we rely on process termination after report write.
-        if client is not None and client_entered and args.mode == "direct":
-            try:
-                await asyncio.wait_for(client.__aexit__(None, None, None), timeout=3.0)
-            except Exception:
-                pass
-        if http_runner is not None:
-            http_runner.stop()
+    async with client:
+        tmux_available = True
+        # try:
+        #     probe = await client.call_tool(
+        #         "execute_command",
+        #         {"command": "tmux -V >/dev/null 2>&1; echo $?", "cwd": args.cwd, "shell": args.shell},
+        #     )
+        #     probe_text = extract_text(probe)
+        #     tmux_available = "\n0\n" in f"\n{probe_text}\n"
+        # except Exception:
+        #     tmux_available = False
 
-    report_path = Path(args.output)
+        for scenario in scenarios:
+            results.append(await call_tool(client, scenario))
+
+    passed = sum(1 for item in results if item.passed)
+    total = len(results)
+    print(f"\nSummary: {passed}/{total} scenarios passed")
+    report_path = Path(args.report)
     if not report_path.is_absolute():
-        report_path = (PROJECT_ROOT / report_path).resolve()
-    write_report(report_path, args, results)
+        report_path = PROJECT_ROOT / report_path
+    report_path = report_path.resolve()
+    write_report(report_path=report_path, args=args, results=results)
     print(f"Report written: {report_path}")
-
-    passed = sum(1 for r in results if r.passed)
-    return 0 if passed == len(results) else 1
+    return 0 if passed == total else 1
 
 
 def main() -> None:
     args = parse_args()
-    hard_timeout = max(30.0, args.max_duration + 30.0)
-    watchdog = threading.Timer(hard_timeout, lambda: os._exit(124))
-    watchdog.daemon = True
-    watchdog.start()
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        exit_code = loop.run_until_complete(run(args))
-    finally:
-        watchdog.cancel()
-        try:
-            loop.stop()
-            loop.close()
-        except Exception:
-            pass
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os._exit(exit_code)
+    exit_code = asyncio.run(run_scenarios(args))
+    raise SystemExit(exit_code)
 
 
 if __name__ == "__main__":

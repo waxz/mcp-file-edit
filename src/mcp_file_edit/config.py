@@ -12,95 +12,125 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None
 
+import logging
+import platform
+import shutil
+from argparse import Namespace
+from pathlib import Path
+from typing import Any, Dict
 
-@dataclass
-class RuntimeConfig:
-    allow_directories: list[Path]
-
-
-def _default_allow_directories() -> list[Path]:
-    return [Path.cwd().resolve()]
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
-
-
-def _default_config_path() -> Path:
-    return _repo_root() / "config.toml"
+import toml
+from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic_settings import BaseSettings
+from .os_utils import check_installed
+from .path_utils import is_windows_style_path, normalize_directory_value,get_platform_path
 
 
-def _parse_allow_directories(raw: str) -> list[Path]:
-    roots: list[Path] = []
-    for part in raw.split(os.pathsep):
-        candidate = part.strip()
-        if not candidate:
-            continue
-        roots.append(Path(candidate).expanduser().resolve())
 
-    if not roots:
-        return _default_allow_directories()
-
-    unique: list[Path] = []
+def _normalize_directory_list(value: list[str] | None) -> list[str]:
+    if not value:
+        return []
+    result: list[str] = []
     seen: set[str] = set()
-    for root in roots:
-        key = str(root)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(root)
-    return unique
+    for item in value:
+        normalized = normalize_directory_value(item)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
 
 
-def _coerce_allow_directories(value: object) -> list[Path]:
-    if isinstance(value, str):
-        return _parse_allow_directories(value)
-    if isinstance(value, list):
-        roots: list[Path] = []
-        for item in value:
-            if not isinstance(item, str):
-                raise ValueError("config.server.allow_directories must contain strings")
-            item_str = item.strip()
-            if not item_str:
-                continue
-            roots.append(Path(item_str).expanduser().resolve())
-        return roots or _default_allow_directories()
-    raise ValueError("config.server.allow_directories must be string or list of strings")
+class Settings(BaseSettings):
+    """Application runtime settings."""
+
+    APP_NAME: str = "mcp-file-edit"
+    APP_VERSION: str = "0.1.3"
+    COMMAND_TIMEOUT: int = 30
+    TRANSPORT: str = "stdio"
+    HOST: str = "0.0.0.0"
+    PORT: int = 8000
+    PATH: str = "/mcp"
+    PLATFORM: str = "linux"
+    IS_IN_DOCKER : bool = False
+    IS_TMUX_INSTALLED: bool = check_installed("tmux")
+    IS_GIT_INSTALLED: bool = check_installed("git")
+
+    CONFIG: Dict[str, Any] = {}
+
+    WORK_DIR: str|None = None
+    ALLOWED_DIRECTORIES: list[str] = Field(default_factory=list)
+
+    @field_validator("ALLOWED_DIRECTORIES")
+    @classmethod
+    def _normalize_allowed_dirs(cls, value: list[str] | None) -> list[str]:
+        return _normalize_directory_list(value)
+
+    @model_validator(mode="after")
+    def _validate_runtime_contract(self) -> "Settings":
+        if self.TRANSPORT == "http" and not self.PATH:
+            raise ValueError("PATH is required when TRANSPORT is 'http'")
+
+        self.ALLOWED_DIRECTORIES = [
+            get_platform_path(f, self.PLATFORM, self.WORK_DIR)
+            for f in self.ALLOWED_DIRECTORIES
+        ]
+        return self
+
+    @classmethod
+    def from_runtime(
+        cls,
+        args: Namespace,
+        parsed_shells: dict[str, str],
+        shells_from_cli: bool,
+    ) -> "Settings":
+        """Load settings with precedence: defaults -> config.toml -> CLI."""
+        system_name = platform.system().lower()
+        if system_name.startswith("win"):
+            platform_name = "windows"
+        elif system_name == "darwin":
+            platform_name = "macos"
+        else:
+            platform_name = "linux"
+
+        merged: dict[str, Any] = {
+            "PLATFORM": platform_name,
+        }
+
+        config_path = Path(getattr(args, "config", "config.toml") or "config.toml")
+        if config_path.exists():
+            file_config = toml.load(config_path)
+            merged.update(file_config)
 
 
-def _load_from_toml(path: Path) -> RuntimeConfig:
-    if not path.exists():
-        return RuntimeConfig(allow_directories=_default_allow_directories())
 
-    if tomllib is None:
-        raise RuntimeError("Reading config.toml requires Python 3.11+ or tomli")
-
-    data = tomllib.loads(path.read_text(encoding="utf-8"))
-    server_cfg = data.get("server", {}) if isinstance(data, dict) else {}
-    allow_value = server_cfg.get("allow_directories")
-
-    if allow_value is None:
-        return RuntimeConfig(allow_directories=_default_allow_directories())
-
-    return RuntimeConfig(allow_directories=_coerce_allow_directories(allow_value))
+        if getattr(args, "transport", None):
+            merged["TRANSPORT"] = args.transport
+        if getattr(args, "host", None):
+            merged["HOST"] = args.host
+        if getattr(args, "port", None):
+            merged["PORT"] = args.port
+        if args.path:
+            merged["PATH"] = args.path
 
 
-RUNTIME_CONFIG = RuntimeConfig(allow_directories=_default_allow_directories())
+        config_os = merged.get("CONFIG", {}).get(platform_name, {})
+        merged["WORK_DIR"] = config_os.get("work_dir")
+        merged["ALLOWED_DIRECTORIES"] = (
+            config_os.get("allow_directories")
+            if config_os.get("allow_directories") is not None
+            else config_os.get("allow_direcotories")
+        )
+        # print("merged:",merged)
+
+        if getattr(args, "directories", None):
+            merged["ALLOWED_DIRECTORIES"] = list(args.directories)
 
 
-def configure_runtime(config_path: Optional[str] = None, allow_directories_raw: Optional[str] = None) -> RuntimeConfig:
-    """Load runtime config from TOML and optional CLI override."""
-    global RUNTIME_CONFIG
-
-    path = Path(config_path).expanduser().resolve() if config_path else _default_config_path()
-    config = _load_from_toml(path)
-
-    if allow_directories_raw is not None:
-        config.allow_directories = _parse_allow_directories(allow_directories_raw)
-
-    RUNTIME_CONFIG = config
-    return RUNTIME_CONFIG
+        
+        settings = cls(**merged)
+        return settings
 
 
-def get_runtime_config() -> RuntimeConfig:
-    return RUNTIME_CONFIG
+
+
+SETTINGS: Settings | None = None

@@ -53,7 +53,8 @@ async def git_init(
 async def git_clone(
     url: str,
     path: Optional[str] = None,
-    branch: Optional[str] = None
+    branch: Optional[str] = None,
+    depth: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Clone a remote git repository.
@@ -62,6 +63,7 @@ async def git_clone(
         url: Repository URL to clone
         path: Local path to clone into (defaults to project directory)
         branch: Specific branch to clone
+        depth: Depth of the clone (default: None for full clone)
         
     Returns:
         Dictionary with clone result
@@ -71,7 +73,10 @@ async def git_clone(
         raise ValueError("No project directory set. Use set_project_directory first.")
     
     work_path = Path(path) if path else None
-    return await git_ops.clone(url, work_path, branch)
+    result = await git_ops.clone(url, work_path, branch, depth)
+    if not result.get("success"):
+        raise ValueError(result.get("stderr") or "Git clone failed")
+    return result
 
 
 async def git_add(
@@ -141,7 +146,10 @@ async def git_push(
         raise ValueError("No project directory set. Use set_project_directory first.")
     
     work_path = Path(path) if path else None
-    return await git_ops.push(remote, branch, work_path, set_upstream)
+    result = await git_ops.push(remote, branch, work_path, set_upstream)
+    if not result.get("success"):
+        raise ValueError(result.get("stderr") or "Git push failed")
+    return result
 
 
 async def git_pull(
@@ -165,7 +173,10 @@ async def git_pull(
         raise ValueError("No project directory set. Use set_project_directory first.")
     
     work_path = Path(path) if path else None
-    return await git_ops.pull(remote, branch, work_path)
+    result = await git_ops.pull(remote, branch, work_path)
+    if not result.get("success"):
+        raise ValueError(result.get("stderr") or "Git pull failed")
+    return result
 
 
 async def git_log(
@@ -239,7 +250,10 @@ async def git_checkout(
         raise ValueError("No project directory set. Use set_project_directory first.")
     
     work_path = Path(path) if path else None
-    return await git_ops.checkout(branch, create, work_path)
+    result = await git_ops.checkout(branch, create, work_path)
+    if not result.get("success"):
+        raise ValueError(result.get("stderr") or "Git checkout failed")
+    return result
 
 
 async def git_diff(
@@ -287,4 +301,7 @@ async def git_remote(
         raise ValueError("No project directory set. Use set_project_directory first.")
     
     work_path = Path(path) if path else None
-    return await git_ops.remote(action, name, url, work_path)
+    result = await git_ops.remote(action, name, url, work_path)
+    if not result.get("success"):
+        raise ValueError(result.get("error") or result.get("stderr") or "Git remote failed")
+    return result

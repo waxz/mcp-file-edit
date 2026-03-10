@@ -937,6 +937,9 @@ async def patch_file(
     """
     # Normalize patches to support common naming conventions
     patches = [normalize_patch(p) for p in patches]
+    for patch in patches:
+        if not any(key in patch for key in ("line", "start_line", "find", "context", "unified_diff")):
+            raise ValueError("Invalid patch: unsupported patch shape")
     
     file_path = utils.resolve_path(path)
     

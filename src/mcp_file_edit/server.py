@@ -1,597 +1,119 @@
-#!/usr/bin/env python3
-"""
-MCP File Editor Server using FastMCP
-Provides comprehensive file system operations through MCP
-"""
+"""Server bootstrap and MCP tool registration."""
 
-import sys
+from __future__ import annotations
+
 import argparse
-from pathlib import Path
-from typing import Dict, Any, Optional
-
+import logging
+import sys
+from anyio import ClosedResourceError
 from fastmcp import FastMCP
+from mcp.server.session import ServerSession
 
-# Import all utilities and helpers
-# Import path normalization functions for cross-platform compatibility
-from .utils import (
-    SSH_MANAGER,
-    normalize_path,
-    normalize_absolute_path,
-)
-from .file_operations import LocalFileOperations, SSHFileOperations
-from .ssh_manager import SSHConnectionManager
-from .git_operations import LocalGitOperations, SSHGitOperations, GitOperations
-
-# Import tool functions
-from .file_tools import (
-    list_files as list_files_,
-    read_file as read_file_,
-    write_file as write_file_,
-    create_file as create_file_,
-    delete_file as delete_file_,
-    move_file as move_file_,
-    copy_file as copy_file_,
-    search_files as search_files_,
-    replace_in_files as replace_in_files_,
-    patch_file as patch_file_,
-    get_file_info as get_file_info_,
-)
+from . import config
+from .tool_handlers import register_tools
 
 
-from .git_tools import (
-    git_status as git_status_,
-    git_init as git_init_,
-    git_clone as git_clone_,
-    git_add as git_add_,
-    git_commit as git_commit_,
-    git_push as git_push_,
-    git_pull as git_pull_,
-    git_log as git_log_,
-    git_branch as git_branch_,
-    git_checkout as git_checkout_,
-    git_diff as git_diff_,
-    git_remote as git_remote_,
-)
-from .ssh_tools import (
-    ssh_upload as ssh_upload_,
-    ssh_download as ssh_download_,
-    ssh_sync as ssh_sync_,
-)
-from .code_analyzer import (
-    list_functions as list_functions_,
-    get_function_at_line as get_function_at_line_,
-    get_code_structure as get_code_structure_,
-    search_functions as search_functions_,
-)
-from .linting_tools import (
-    detect_linters as detect_linters_,
-    run_linter as run_linter_,
-    lint_file as lint_file_,
-    run_type_checker as run_type_checker_,
-    type_check_file as type_check_file_,
-    format_file as format_file_,
-)
-from .config import configure_runtime
-
-
-# Parse command line arguments
-def parse_args() -> argparse.Namespace:
-    """Parse command line arguments for directories and shells."""
-    parser = argparse.ArgumentParser(description="MCP File Editor Server")
-    
+def parse_args() -> tuple[argparse.Namespace, dict[str, str], bool]:
+    """Parse CLI args and optional shell overrides."""
+    parser = argparse.ArgumentParser(description="Shell MCP Server")
+    parser.add_argument("-d", "--directories", nargs="+", help="Allowed directories")
     parser.add_argument(
-        "-t", "--transport", type=str, default="stdio", choices=["stdio", "http"]
+        "--shell",
+        action="append",
+        nargs=2,
+        metavar=("name", "path"),
+        help="Shell mapping (name path)",
+    )
+
+    parser.add_argument(
+        "-t",
+        "--transport",
+        type=str,
+        choices=["stdio", "http"],
+        default=None,
+        help="Server transport override",
     )
     parser.add_argument("-H", "--host", type=str, default="0.0.0.0")
-    parser.add_argument("-P", "--port", type=int, default=8000)
+    parser.add_argument("-P", "--port", type=int, default="8000")
     parser.add_argument("-p", "--path", type=str, default="/mcp")
-    parser.add_argument("-n", "--name", type=str, default="file-editor")
-    parser.add_argument(
-        "--allow-directories",
-        type=str,
-        default=None,
-        help="Allowed local roots for set_project_directory (os.pathsep-separated).",
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        default="config.toml",
-        help="Path to config.toml.",
-    )
+    parser.add_argument("-c", "--config", type=str, default="config.toml")
 
-    # Allow import in host processes which pass unrelated CLI flags (e.g., pytest)
-    return parser.parse_known_args()[0]
+    args = parser.parse_args()
+    shells_from_cli = bool(args.shell)
+    shells = {name: path for name, path in (args.shell or [])}
+    return args, shells, shells_from_cli
 
 
-args = parse_args()
-configure_runtime(config_path=args.config, allow_directories_raw=args.allow_directories)
+def build_server() -> FastMCP:
+    """Initialize runtime settings and return configured FastMCP server."""
+    args, shells, shells_from_cli = parse_args()
+    config.SETTINGS = config.Settings.from_runtime(args, shells, shells_from_cli)
 
-# Create the MCP server instance
-mcp = FastMCP(args.name)
+    # Patch ServerSession to swallow ClosedResourceError when sending response after client disconnects
+    _original_send_response = ServerSession._send_response
 
-
-
-
-# File Management Tools
-@mcp.tool
-async def list_files(
-    path: str = ".",
-    pattern: str = "*",
-    recursive: bool = False,
-    include_hidden: bool = False,
-    max_depth: Optional[int] = None,
-) -> Any:
-    """List files/directories in a path. Returns matching entries with metadata; raises ValueError for invalid paths."""
-    return await list_files_(path, pattern, recursive, include_hidden, max_depth)
-
-
-@mcp.tool
-async def read_file(
-    path: str,
-    encoding: str = "utf-8",
-    start_line: Optional[int] = None,
-    end_line: Optional[int] = None,
-) -> Any:
-    """Read a file. Returns text or base64 content depending on file type; raises ValueError for invalid or missing targets."""
-    return await read_file_(path, encoding, start_line, end_line)
-
-
-@mcp.tool
-async def write_file(
-    path: str, content: str, encoding: str = "utf-8", create_dirs: bool = False
-) -> Any:
-    """Write content to a file. Returns path and size; raises ValueError for invalid paths or write errors."""
-    return await write_file_(path, content, encoding, create_dirs)
-
-
-@mcp.tool
-async def create_file(path: str, content: str = "", encoding:str = "utf-8", create_dirs: bool = False) -> Any:
-    """Create a new file with optional content. Returns created file info; raises ValueError when file already exists or path is invalid."""
-    return await create_file_(path, content, encoding, create_dirs)
-
-
-@mcp.tool
-async def delete_file(path: str, recursive: bool = False) -> Any:
-    """Delete a file or directory. Returns deleted path info; raises ValueError for invalid paths or blocked delete operations."""
-    return await delete_file_(path, recursive)
-
-
-@mcp.tool
-async def move_file(source: str, destination: str, overwrite: bool = False) -> Any:
-    """Move or rename a file/directory. Returns source/destination info; raises ValueError for invalid paths or conflicts."""
-    return await move_file_(source, destination, overwrite)
-
-
-@mcp.tool
-async def copy_file(source: str, destination: str, overwrite: bool = False) -> Any:
-    """Copy a file or directory. Returns source/destination info; raises ValueError for invalid paths or conflicts."""
-    return await copy_file_(source, destination, overwrite)
-
-
-@mcp.tool
-async def search_files(
-    pattern: str,
-    path: str = ".",
-    file_pattern: str = "*",
-    recursive: bool = True,
-    max_depth: Optional[int] = None,
-    timeout: float = 30.0,
-) -> Any:
-    """Search text by regex across files. Returns matches and stats, including timeout/error metadata."""
-    return await search_files_(
-        pattern, path, file_pattern, recursive, max_depth, timeout
-    )
-
-
-@mcp.tool
-async def replace_in_files(
-    search: str,
-    replace: str,
-    path: str = ".",
-    file_pattern: str = "*",
-    recursive: bool = True,
-    max_depth: Optional[int] = None,
-    timeout: float = 30.0,
-) -> Any:
-    """Replace text by regex across files. Returns replacement stats per file, including timeout/error metadata."""
-    return await replace_in_files_(
-        search, replace, path, file_pattern, recursive, max_depth, timeout
-    )
-
-
-@mcp.tool
-async def patch_file(
-    path: str,
-    patches: list,
-    backup: bool = True,
-    dry_run: bool = False,
-    create_dirs: bool = False,
-) -> Any:
-    """Apply targeted patches to one file. Returns per-patch results and final status."""
-    return await patch_file_(path, patches, backup, dry_run, create_dirs)
-
-
-@mcp.tool
-async def get_file_info(path: str) -> Any:
-    """Get metadata for a file/directory. Returns type, size, timestamps, and normalized paths."""
-    return await get_file_info_(path)
-
-
-# Git Operations Tools
-@mcp.tool
-async def git_status(path: Optional[str] = None) -> Any:
-    """Get repository status for a path. Returns branch and file-state details."""
-    return await git_status_(path)
-
-
-@mcp.tool
-async def git_init(path: Optional[str] = None) -> Any:
-    """Initialize a git repository at a path. Returns operation result details."""
-    return await git_init_(path)
-
-
-@mcp.tool
-async def git_clone(
-    url: str, path: Optional[str] = None, branch: Optional[str] = None
-) -> Any:
-    """Clone a repository URL to a destination path. Returns clone result details."""
-    return await git_clone_(url, path, branch)
-
-
-@mcp.tool
-async def git_add(files: list[str], path: Optional[str] = None) -> Any:
-    """Stage files for commit. Returns staging result details."""
-    return await git_add_(files, path)
-
-
-@mcp.tool
-async def git_commit(message: str, path: Optional[str] = None) -> Any:
-    """Commit staged changes with a message. Returns commit result details."""
-    return await git_commit_(message, path)
-
-
-@mcp.tool
-async def git_push(
-    remote: str = "origin",
-    branch: Optional[str] = None,
-    set_upstream: bool = False,
-    path: Optional[str] = None,
-) -> Any:
-    """Push commits to a remote. Returns push result details."""
-    return await git_push_(remote, branch, set_upstream, path)
-
-
-@mcp.tool
-async def git_pull(
-    remote: str = "origin", branch: Optional[str] = None, path: Optional[str] = None
-) -> Any:
-    """Pull changes from a remote. Returns pull result details."""
-    return await git_pull_(remote, branch, path)
-
-
-@mcp.tool
-async def git_log(
-    limit: int = 10, oneline: bool = True, path: Optional[str] = None
-) -> Any:
-    """Get commit history. Returns parsed commit entries."""
-    return await git_log_(limit, oneline, path)
-
-
-@mcp.tool
-async def git_branch(
-    create: Optional[str] = None,
-    delete: Optional[str] = None,
-    list_all: bool = False,
-    path: Optional[str] = None,
-) -> Any:
-    """List/create/delete branches. Returns branch operation details."""
-    return await git_branch_(create, delete, list_all, path)
-
-
-@mcp.tool
-async def git_checkout(
-    branch: str, create: bool = False, path: Optional[str] = None
-) -> Any:
-    """Switch to a branch/commit, optionally creating a branch. Returns checkout result details."""
-    return await git_checkout_(branch, create, path)
-
-
-@mcp.tool
-async def git_diff(cached: bool = False, path: Optional[str] = None) -> Any:
-    """Get diff output for working tree or staged changes. Returns diff content and status."""
-    return await git_diff_(cached, path)
-
-
-@mcp.tool
-async def git_remote(
-    action: str = "list",
-    name: Optional[str] = None,
-    url: Optional[str] = None,
-    path: Optional[str] = None,
-) -> Any:
-    """List/add/remove/set-url for remotes. Returns remote operation details."""
-    return await git_remote_(action, name, url, path)
-
-
-# SSH Operations Tools
-@mcp.tool
-async def ssh_upload(
-    local_path: str, remote_path: str, recursive: bool = False, overwrite: bool = True
-) -> Any:
-    """Upload local file(s) to the connected remote path. Returns uploaded files, sizes, and errors."""
-    return await ssh_upload_(local_path, remote_path, recursive, overwrite)
-
-
-@mcp.tool
-async def ssh_download(
-    remote_path: str, local_path: str, recursive: bool = False, overwrite: bool = True
-) -> Any:
-    """Download remote file(s) to local path. Returns downloaded files, sizes, and errors."""
-    return await ssh_download_(remote_path, local_path, recursive, overwrite)
-
-
-@mcp.tool
-async def ssh_sync(
-    local_path: str,
-    remote_path: str,
-    direction: str = "upload",
-    delete: bool = False,
-    exclude_patterns: Optional[list] = None,
-    update_only: bool = True,
-    show_progress: bool = True,
-) -> Any:
-    """Sync local and remote directories using rsync. Returns sync summary, transferred files, and command output."""
-    return await ssh_sync_(
-        local_path,
-        remote_path,
-        direction,
-        delete,
-        exclude_patterns,
-        update_only,
-        show_progress,
-    )
-
-
-# Code Analysis Tools
-@mcp.tool
-async def list_functions(path: str, language: Optional[str] = None) -> Any:
-    """List functions in a source file. Returns names, signatures, and locations."""
-    return await list_functions_(path, language)
-
-
-@mcp.tool
-async def get_function_at_line(
-    path: str, line_number: int, language: Optional[str] = None
-) -> Any:
-    """Find the function containing a line number. Returns function details or no match."""
-    return await get_function_at_line_(path, line_number, language)
-
-
-@mcp.tool
-async def get_code_structure(path: str, language: Optional[str] = None) -> Any:
-    """Get structural summary for a source file. Returns imports, classes, functions, and top-level items."""
-    return await get_code_structure_(path, language)
-
-
-@mcp.tool
-async def search_functions(
-    pattern: str,
-    path: str = ".",
-    file_pattern: str = "*.py",
-    recursive: bool = True,
-    max_depth: Optional[int] = None,
-) -> Any:
-    """Search function definitions by name pattern across files. Returns matching functions and file locations."""
-    return await search_functions_(pattern, path, file_pattern, recursive, max_depth)
-
-
-# Project Management Tools
-@mcp.tool
-async def set_project_directory(
-    path: str,
-    connection_type: str = "local",
-    ssh_host: Optional[str] = None,
-    ssh_username: Optional[str] = None,
-    ssh_port: int = 22,
-    ssh_key_filename: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Set active project directory and connection mode. For local mode, path must be inside ALLOW_DIRECTORIES."""
-    from . import utils
-    utils.validate_path_input(path)
-
-    if connection_type == "ssh":
-        # Parse SSH URL if provided
-        if path.startswith("ssh://"):
-            ssh_params = SSHConnectionManager.parse_ssh_url(path)
-            ssh_host = ssh_params["host"]
-            ssh_username = ssh_params.get("username") or ssh_username
-            ssh_port = ssh_params.get("port", ssh_port)
-            path = ssh_params["path"]
-
-        # Validate SSH parameters
-        if not ssh_host:
-            raise ValueError("SSH host is required for SSH connection")
-        if not ssh_username:
-            raise ValueError("SSH username is required for SSH connection")
-
-        # Set default key if not provided
-        if not ssh_key_filename:
-            ssh_key_filename = "~/.ssh/id_rsa"
-
-        # Connect via SSH
+    async def _patched_send_response(self, request_id, response):
         try:
-            conn, sftp = await SSH_MANAGER.connect(
-                host=ssh_host,
-                username=ssh_username,
-                port=ssh_port,
-                key_filename=ssh_key_filename,
-            )
+            await _original_send_response(self, request_id, response)
+        except ClosedResourceError:
+            logging.info("ClosedResourceError suppressed while sending response")
 
-            # Update global state
-            utils.FILE_OPS = SSHFileOperations(conn, sftp)
-            utils.CONNECTION_TYPE = "ssh"
-            utils.GIT_OPS = None
-            utils.PROJECT_DIR = Path(path)
+    ServerSession._send_response = _patched_send_response
 
-            # Verify the directory exists on remote
-            if not await utils.FILE_OPS.exists(utils.PROJECT_DIR):
-                raise ValueError(f"Remote directory does not exist: {path}")
-
-            if not await utils.FILE_OPS.is_dir(utils.PROJECT_DIR):
-                raise ValueError(f"Remote path is not a directory: {path}")
-
-            # Return normalized paths for cross-platform compatibility
-            return {
-                "project_directory": normalize_path(utils.PROJECT_DIR),
-                "connection_type": "ssh",
-                "ssh_host": ssh_host,
-                "ssh_username": ssh_username,
-                "ssh_port": ssh_port,
-                "absolute_path": normalize_absolute_path(utils.PROJECT_DIR),
-            }
-
-        except Exception as e:
-            # Reset to local on error
-            utils.FILE_OPS = LocalFileOperations()
-            utils.CONNECTION_TYPE = "local"
-            raise ValueError(f"Failed to establish SSH connection: {str(e)}")
-
-    else:
-        # Local connection
-        from . import utils
-
-        utils.FILE_OPS = LocalFileOperations()
-        utils.CONNECTION_TYPE = "local"
-        utils.GIT_OPS = None
-
-        await SSH_MANAGER.close()
-
-        project_path = Path(path).resolve()
-
-        if not project_path.exists():
-            raise ValueError(f"Project directory does not exist: {path}")
-
-        if not project_path.is_dir():
-            raise ValueError(f"Path is not a directory: {path}")
-
-        allowed_roots = utils.get_allow_directories()
-        if not utils.is_within_allowed_directories(project_path, allowed_roots):
-            allowed_display = [normalize_path(root) for root in allowed_roots]
-            raise ValueError(
-                f"Project directory is not allowed: {normalize_path(project_path)}. "
-                f"Allowed roots: {allowed_display}"
-            )
-
-        utils.PROJECT_DIR = project_path
-
-        # Return normalized paths for cross-platform compatibility
-        result = {
-            "project_directory": normalize_path(utils.PROJECT_DIR),
-            "connection_type": "local",
-            "relative_to_project": ".",
-            "absolute_path": normalize_absolute_path(utils.PROJECT_DIR),
-        }
-        try:
-            result["relative_to_base"] = normalize_path(
-                utils.PROJECT_DIR.relative_to(utils.BASE_DIR)
-            )
-        except ValueError:
-            result["relative_to_base"] = None
-        return result
+    app = FastMCP(config.SETTINGS.APP_NAME)
+    register_tools(app)
+    return app
 
 
-@mcp.tool
-async def get_project_directory() -> Dict[str, Any]:
-    """Get current project directory and connection details. Returns local/SSH-specific status fields."""
-    from . import utils
+def main() -> None:
+    """Main entry point for running server with selected transport."""
 
-    if utils.PROJECT_DIR is None:
-        return {
-            "project_directory": None,
-            "connection_type": utils.CONNECTION_TYPE,
-            "message": "No project directory set. Use set_project_directory to set one.",
-        }
+    # Suppress ClosedResourceError that happens when clients disconnect
+    logging.getLogger("fastmcp").setLevel(logging.INFO)
+    logging.getLogger("anyio").setLevel(logging.INFO)
 
-    # Return normalized paths for cross-platform compatibility
-    result = {
-        "project_directory": normalize_path(utils.PROJECT_DIR),
-        "connection_type": utils.CONNECTION_TYPE,
-        "absolute_path": normalize_absolute_path(utils.PROJECT_DIR),
-    }
-
-    # Add local-specific info
-    if utils.CONNECTION_TYPE == "local":
-        result["relative_to_project"] = "."
-        try:
-            result["relative_to_base"] = normalize_path(
-                utils.PROJECT_DIR.relative_to(utils.BASE_DIR)
-            )
-        except ValueError:
-            result["relative_to_base"] = None
-        result["exists"] = utils.PROJECT_DIR.exists()
-    else:
-        # For SSH, we're already connected
-        result["ssh_connected"] = SSH_MANAGER.is_connected()
-
-    return result
-
-
-# Linting and Type Checking Tools
-@mcp.tool
-async def detect_linters(path: str = ".") -> Any:
-    """Detect available linters/type checkers/formatters for a path. Returns tools, configs, and detected languages."""
-    return await detect_linters_(path)
-
-
-@mcp.tool
-async def run_linter(
-    path: str = ".", tool: Optional[str] = None, fix: bool = False, timeout: int = 60
-) -> Any:
-    """Run a linter for a path. Returns pass/fail, issues, and raw output."""
-    return await run_linter_(path, tool, fix, timeout)
-
-
-@mcp.tool
-async def lint_file(
-    path: str, tool: Optional[str] = None, fix: bool = False, timeout: int = 30
-) -> Any:
-    """Lint a single file. Returns pass/fail, issues, and raw output."""
-    return await lint_file_(path, tool, fix, timeout)
-
-
-@mcp.tool
-async def run_type_checker(
-    path: str = ".", tool: Optional[str] = None, timeout: int = 60
-) -> Any:
-    """Run a type checker for a path. Returns pass/fail, issues, and raw output."""
-    return await run_type_checker_(path, tool, timeout)
-
-
-@mcp.tool
-async def type_check_file(
-    path: str, tool: Optional[str] = None, timeout: int = 30
-) -> Any:
-    """Type-check a single file. Returns pass/fail, issues, and raw output."""
-    return await type_check_file_(path, tool, timeout)
-
-
-@mcp.tool
-async def format_file(
-    path: str, tool: Optional[str] = None, check_only: bool = False, timeout: int = 30
-) -> Any:
-    """Format a file with an auto-detected or selected formatter. Returns formatter status and output."""
-    return await format_file_(path, tool, check_only, timeout)
-
-
-def main():
-    """Main entry point for the MCP server."""
+    logging.getLogger("mcp.server.streamable_http_manager").setLevel(logging.INFO)
+    logging.getLogger("mcp.server.lowlevel.server").setLevel(logging.INFO)
+    logging.getLogger("mcp.server.streamable_http").setLevel(logging.INFO)
     
-    print(f"Starting MCP server with transport={args.transport}")
+    logging.getLogger("mcp").setLevel(logging.INFO)
+    logging.info("Starting server...")
+    app = build_server()
 
-    if args.transport == "stdio":
-        mcp.run()
-    elif args.transport == "http":
-        mcp.run(transport="http", port=args.port, host=args.host, path=args.path)
+    assert config.SETTINGS is not None
+
+
+    # Custom exception handler to suppress client disconnect errors
+    old_excepthook = sys.excepthook
+
+    def new_excepthook(exc_type, exc_value, exc_traceback):
+        # Suppress ClosedResourceError from crashing the server
+        if exc_type.__name__ == "ClosedResourceError":
+            logging.info("Client disconnected (ClosedResourceError suppressed)")
+            return
+        # Also suppress ExceptionGroup containing ClosedResourceError
+        if exc_type.__name__ == "BaseExceptionGroup":
+            if "unhandled errors" in str(exc_value):
+                # Check if it's just ClosedResourceError
+                for cause in exc_value.exceptions or []:
+                    if "ClosedResourceError" in str(type(cause).__name__):
+                        logging.info("Client disconnected (ExceptionGroup suppressed)")
+                        return
+        old_excepthook(exc_type, exc_value, exc_traceback)
+
+    sys.excepthook = new_excepthook
+
+
+    if config.SETTINGS.TRANSPORT == "http":
+        app.run(
+            transport="http",
+            port=config.SETTINGS.PORT,
+            host=config.SETTINGS.HOST,
+            path=config.SETTINGS.PATH,
+        )
+        return
+
+    app.run()
 
 
 if __name__ == "__main__":

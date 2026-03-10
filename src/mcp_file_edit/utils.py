@@ -14,7 +14,7 @@ from datetime import datetime
 from .file_operations import FileOperationsInterface, LocalFileOperations
 from .ssh_manager import SSHConnectionManager
 from .git_operations import GitOperations, LocalGitOperations, SSHGitOperations
-from .config import get_runtime_config
+from . import config
 
 
 # =============================================================================
@@ -125,6 +125,11 @@ def validate_path_input(path: str) -> None:
     if any(ch in path for ch in UNSAFE_PATH_CHARS):
         raise ValueError("Invalid path: unsafe characters detected")
 
+    normalized = path.replace("\\", "/")
+    parts = [part for part in normalized.split("/") if part and part != "."]
+    if ".." in parts:
+        raise ValueError("Invalid path: directory traversal detected")
+
     # Cross-platform style guards:
     # - Linux/WSL/macOS: reject Windows-style paths (backslashes, drive letter, UNC)
     # - Windows: reject POSIX-style absolute paths (/...)
@@ -143,19 +148,17 @@ def get_allow_directories() -> list[Path]:
     Reads runtime config loaded from config.toml / CLI.
     Defaults to BASE_DIR when unset or empty.
     """
-    roots = [root.resolve() for root in get_runtime_config().allow_directories]
-    if not roots:
-        return [BASE_DIR.resolve()]
+    allow_directories = config.SETTINGS.ALLOWED_DIRECTORIES
 
     # Preserve order, remove duplicates
     unique: list[Path] = []
     seen: set[str] = set()
-    for root in roots:
+    for root in allow_directories:
         key = str(root)
         if key in seen:
             continue
         seen.add(key)
-        unique.append(root)
+        unique.append(Path(root))
     return unique
 
 
