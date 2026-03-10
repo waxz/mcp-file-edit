@@ -8,11 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from .file_operations import LocalFileOperations
-from .ssh_manager import SSHConnectionManager
-from .utils import (
-    FILE_OPS, PROJECT_DIR, SSH_MANAGER, CONNECTION_TYPE,
-    BASE_DIR, resolve_path
-)
+from . import utils
 
 
 # Tool functions that will be registered with FastMCP
@@ -35,7 +31,7 @@ async def ssh_upload(
     Returns:
         Dictionary with upload results
     """
-    if CONNECTION_TYPE != "ssh":
+    if utils.CONNECTION_TYPE != "ssh":
         raise ValueError("SSH connection not established. Use set_project_directory with connection_type='ssh' first")
     
     # Ensure we have local file operations for reading
@@ -45,9 +41,9 @@ async def ssh_upload(
     local_path_obj = Path(local_path).resolve()
     remote_path_obj = Path(remote_path)
     
-    # If remote path is relative, make it relative to PROJECT_DIR
+    # If remote path is relative, make it relative to utils.PROJECT_DIR
     if not remote_path_obj.is_absolute():
-        remote_path_obj = PROJECT_DIR / remote_path_obj
+        remote_path_obj = utils.PROJECT_DIR / remote_path_obj
     
     # Check if local path exists
     if not await local_ops.exists(local_path_obj):
@@ -61,8 +57,8 @@ async def ssh_upload(
             # Upload single file
             try:
                 # Check if remote path exists and is a directory
-                remote_exists = await FILE_OPS.exists(remote_path_obj)
-                if remote_exists and await FILE_OPS.is_dir(remote_path_obj):
+                remote_exists = await utils.FILE_OPS.exists(remote_path_obj)
+                if remote_exists and await utils.FILE_OPS.is_dir(remote_path_obj):
                     # If remote is a directory, use same filename
                     remote_file_path = remote_path_obj / local_path_obj.name
                 else:
@@ -70,17 +66,17 @@ async def ssh_upload(
                     remote_file_path = remote_path_obj
                 
                 # Check if should overwrite
-                if await FILE_OPS.exists(remote_file_path) and not overwrite:
+                if await utils.FILE_OPS.exists(remote_file_path) and not overwrite:
                     errors.append({
                         "file": str(local_path_obj),
                         "error": f"Remote file exists and overwrite=False: {remote_file_path}"
                     })
                 else:
                     # Read local file
-                    content = await local_ops.read(local_path_obj)
+                    content = await local_ops.read_binary(local_path_obj)
                     
                     # Write to remote
-                    await FILE_OPS.write(remote_file_path, content)
+                    await utils.FILE_OPS.write_file(remote_file_path, content)
                     
                     uploaded_files.append({
                         "local": str(local_path_obj),
@@ -98,8 +94,8 @@ async def ssh_upload(
                 raise ValueError("Directory upload requires recursive=True")
             
             # Create remote directory if it doesn't exist
-            if not await FILE_OPS.exists(remote_path_obj):
-                await FILE_OPS.makedirs(remote_path_obj)
+            if not await utils.FILE_OPS.exists(remote_path_obj):
+                await utils.FILE_OPS.makedirs(remote_path_obj)
             
             # Walk through local directory
             for root, dirs, files in os.walk(local_path_obj):
@@ -110,8 +106,8 @@ async def ssh_upload(
                 for dir_name in dirs:
                     remote_dir = remote_path_obj / rel_path / dir_name
                     try:
-                        if not await FILE_OPS.exists(remote_dir):
-                            await FILE_OPS.makedirs(remote_dir)
+                        if not await utils.FILE_OPS.exists(remote_dir):
+                            await utils.FILE_OPS.makedirs(remote_dir)
                     except Exception as e:
                         errors.append({
                             "file": str(root_path / dir_name),
@@ -124,7 +120,7 @@ async def ssh_upload(
                     remote_file = remote_path_obj / rel_path / file_name
                     
                     try:
-                        if await FILE_OPS.exists(remote_file) and not overwrite:
+                        if await utils.FILE_OPS.exists(remote_file) and not overwrite:
                             errors.append({
                                 "file": str(local_file),
                                 "error": f"Remote file exists and overwrite=False: {remote_file}"
@@ -132,10 +128,10 @@ async def ssh_upload(
                             continue
                         
                         # Read local file
-                        content = await local_ops.read(local_file)
+                        content = await local_ops.read_binary(local_file)
                         
                         # Write to remote
-                        await FILE_OPS.write(remote_file, content)
+                        await utils.FILE_OPS.write_file(remote_file, content)
                         
                         uploaded_files.append({
                             "local": str(local_file),
@@ -178,7 +174,7 @@ async def ssh_download(
     Returns:
         Dictionary with download results
     """
-    if CONNECTION_TYPE != "ssh":
+    if utils.CONNECTION_TYPE != "ssh":
         raise ValueError("SSH connection not established. Use set_project_directory with connection_type='ssh' first")
     
     # Ensure we have local file operations for writing
@@ -188,19 +184,19 @@ async def ssh_download(
     local_path_obj = Path(local_path).resolve()
     remote_path_obj = Path(remote_path)
     
-    # If remote path is relative, make it relative to PROJECT_DIR
+    # If remote path is relative, make it relative to utils.PROJECT_DIR
     if not remote_path_obj.is_absolute():
-        remote_path_obj = PROJECT_DIR / remote_path_obj
+        remote_path_obj = utils.PROJECT_DIR / remote_path_obj
     
     # Check if remote path exists
-    if not await FILE_OPS.exists(remote_path_obj):
+    if not await utils.FILE_OPS.exists(remote_path_obj):
         raise ValueError(f"Remote path does not exist: {remote_path}")
     
     downloaded_files = []
     errors = []
     
     try:
-        if await FILE_OPS.is_file(remote_path_obj):
+        if await utils.FILE_OPS.is_file(remote_path_obj):
             # Download single file
             try:
                 # Check if local path exists and is a directory
@@ -223,10 +219,10 @@ async def ssh_download(
                     local_file_path.parent.mkdir(parents=True, exist_ok=True)
                     
                     # Read remote file
-                    content = await FILE_OPS.read(remote_path_obj)
+                    content = await utils.FILE_OPS.read_binary(remote_path_obj)
                     
                     # Write to local
-                    await local_ops.write(local_file_path, content)
+                    await local_ops.write_file(local_file_path, content)
                     
                     downloaded_files.append({
                         "remote": str(remote_path_obj),
@@ -239,7 +235,7 @@ async def ssh_download(
                     "error": str(e)
                 })
         
-        elif await FILE_OPS.is_dir(remote_path_obj):
+        elif await utils.FILE_OPS.is_dir(remote_path_obj):
             if not recursive:
                 raise ValueError("Directory download requires recursive=True")
             
@@ -249,14 +245,14 @@ async def ssh_download(
             # List and download directory contents recursively
             async def download_dir(remote_dir: Path, local_dir: Path):
                 # List remote directory contents
-                entries = await FILE_OPS.listdir(remote_dir)
+                entries = await utils.FILE_OPS.listdir(remote_dir)
                 
                 for entry in entries:
                     remote_entry = remote_dir / entry
                     local_entry = local_dir / entry
                     
                     try:
-                        if await FILE_OPS.is_dir(remote_entry):
+                        if await utils.FILE_OPS.is_dir(remote_entry):
                             # Create local directory
                             local_entry.mkdir(exist_ok=True)
                             # Recursively download subdirectory
@@ -271,10 +267,10 @@ async def ssh_download(
                                 continue
                             
                             # Read remote file
-                            content = await FILE_OPS.read(remote_entry)
+                            content = await utils.FILE_OPS.read_binary(remote_entry)
                             
                             # Write to local
-                            await local_ops.write(local_entry, content)
+                            await local_ops.write_file(local_entry, content)
                             
                             downloaded_files.append({
                                 "remote": str(remote_entry),
@@ -325,14 +321,14 @@ async def ssh_sync(
     Returns:
         Dictionary with sync results
     """
-    if CONNECTION_TYPE != "ssh":
+    if utils.CONNECTION_TYPE != "ssh":
         raise ValueError("SSH connection not established. Use set_project_directory with connection_type='ssh' first")
     
     if direction not in ["upload", "download"]:
         raise ValueError("Direction must be 'upload' or 'download'")
     
-    # Get SSH connection details from SSH_MANAGER
-    if not SSH_MANAGER.host or not SSH_MANAGER.username:
+    # Get SSH connection details from utils.SSH_MANAGER
+    if not utils.SSH_MANAGER.host or not utils.SSH_MANAGER.username:
         raise ValueError("SSH host and username not configured")
     
     # Build rsync command
@@ -356,9 +352,9 @@ async def ssh_sync(
             rsync_cmd.extend(["--exclude", pattern])
     
     # Add SSH options
-    ssh_options = f"-p {SSH_MANAGER.port}"
-    if SSH_MANAGER.key_filename:
-        ssh_options += f" -i {SSH_MANAGER.key_filename}"
+    ssh_options = f"-p {utils.SSH_MANAGER.port}"
+    if utils.SSH_MANAGER.key_filename:
+        ssh_options += f" -i {utils.SSH_MANAGER.key_filename}"
     rsync_cmd.extend(["-e", f"ssh {ssh_options}"])
     
     # Build source and destination paths
@@ -367,12 +363,12 @@ async def ssh_sync(
         if not local_path.endswith('/'):
             local_path += '/'
         source = local_path
-        destination = f"{SSH_MANAGER.username}@{SSH_MANAGER.host}:{remote_path}"
+        destination = f"{utils.SSH_MANAGER.username}@{utils.SSH_MANAGER.host}:{remote_path}"
     else:  # download
         # Ensure remote path ends with / for directory sync
         if not remote_path.endswith('/'):
             remote_path += '/'
-        source = f"{SSH_MANAGER.username}@{SSH_MANAGER.host}:{remote_path}"
+        source = f"{utils.SSH_MANAGER.username}@{utils.SSH_MANAGER.host}:{remote_path}"
         destination = local_path
     
     rsync_cmd.extend([source, destination])

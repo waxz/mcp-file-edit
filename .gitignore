@@ -21,6 +21,7 @@ wheels/
 *.egg
 .agent
 
+.workspace/*
 # Virtual Environment
 venv/
 ENV/

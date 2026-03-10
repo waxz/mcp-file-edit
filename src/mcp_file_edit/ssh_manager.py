@@ -79,6 +79,37 @@ class SSHConnectionManager:
     def sftp(self) -> Optional[asyncssh.SFTPClient]:
         """Get current SFTP client."""
         return self._sftp
+
+    @property
+    def host(self) -> Optional[str]:
+        """Get configured SSH host."""
+        if not self._connection_params:
+            return None
+        return self._connection_params.get("host")
+
+    @property
+    def username(self) -> Optional[str]:
+        """Get configured SSH username."""
+        if not self._connection_params:
+            return None
+        return self._connection_params.get("username")
+
+    @property
+    def port(self) -> int:
+        """Get configured SSH port."""
+        if not self._connection_params:
+            return 22
+        return int(self._connection_params.get("port", 22))
+
+    @property
+    def key_filename(self) -> Optional[str]:
+        """Get configured SSH key filename, if set."""
+        if not self._connection_params:
+            return None
+        client_keys = self._connection_params.get("client_keys")
+        if not client_keys:
+            return None
+        return str(client_keys[0])
     
     @staticmethod
     def parse_ssh_url(url: str) -> Dict[str, Any]:

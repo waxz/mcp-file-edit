@@ -1,0 +1,17 @@
+# [server]
+# Allowed local roots for set_project_directory.
+# Use absolute paths. Relative paths are resolved from process cwd.
+
+HOST = "0.0.0.0"
+PATH = "/fs"
+PORT = 8001
+
+
+[CONFIG.windows]
+work_dir = "C:/Users/axdev/dev/repo"
+allow_direcotories = [".", "../", "./data"]
+
+
+[CONFIG.linux]
+work_dir = "/mnt/c/Users/axdev/dev/repo"
+allow_direcotories = [".", "../", "./data"]

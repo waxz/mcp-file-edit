@@ -144,7 +144,14 @@ class LocalFileOperations(FileOperationsInterface):
         src.rename(dst)
     
     async def copy_file(self, src: Path, dst: Path) -> None:
-        await asyncio.to_thread(shutil.copy2, src, dst)
+        # Copy content first, then try metadata best-effort. This avoids
+        # cross-platform failures where metadata operations are unsupported
+        # (common on WSL/Windows-mounted filesystems).
+        shutil.copyfile(src, dst)
+        try:
+            shutil.copystat(src, dst)
+        except OSError:
+            pass
     
     async def copy_tree(self, src: Path, dst: Path) -> None:
         await asyncio.to_thread(shutil.copytree, src, dst)
@@ -361,47 +368,23 @@ class SSHFileOperations(FileOperationsInterface):
                 await self.copy_file(src_item, dst_item)
     
     async def search_files(self, path: Path, pattern: str, max_depth: Optional[int] = None) -> List[Tuple[Path, List[str]]]:
-        """Search for pattern in files using remote grep."""
+        """Search for pattern in files."""
         import re
         results = []
-        
-        # Use find and grep on remote system for efficiency
-        remote_path = self._to_remote_path(path)
-        depth_arg = f"-maxdepth {max_depth}" if max_depth else ""
-        
-        # Execute remote find + grep
-        cmd = f'find {remote_path} {depth_arg} -type f -exec grep -Hn "{pattern}" {{}} +'
-        
-        try:
-            result = await self.conn.run(cmd, check=False)
-            if result.stdout:
-                # Parse grep output
-                for line in result.stdout.splitlines():
-                    if ':' in line:
-                        file_path, line_num, content = line.split(':', 2)
-                        file_path = Path(file_path)
-                        
-                        # Group by file
-                        existing = next((r for r in results if r[0] == file_path), None)
-                        if existing:
-                            existing[1].append(f"{line_num}: {content.strip()}")
-                        else:
-                            results.append((file_path, [f"{line_num}: {content.strip()}"]))
-        except Exception:
-            # Fallback to manual search if command fails
-            async for file_path in self._walk_files(path, max_depth):
-                if await self.is_file(file_path):
-                    try:
-                        content = await self.read_file(file_path)
-                        matches = []
-                        regex = re.compile(pattern)
-                        for i, line in enumerate(content.splitlines(), 1):
-                            if regex.search(line):
-                                matches.append(f"{i}: {line.strip()}")
-                        if matches:
-                            results.append((file_path, matches))
-                    except Exception:
-                        pass
+        regex = re.compile(pattern)
+
+        async for file_path in self._walk_files(path, max_depth):
+            if await self.is_file(file_path):
+                try:
+                    content = await self.read_file(file_path)
+                    matches = []
+                    for i, line in enumerate(content.splitlines(), 1):
+                        if regex.search(line):
+                            matches.append(f"{i}: {line.strip()}")
+                    if matches:
+                        results.append((file_path, matches))
+                except Exception:
+                    pass
         
         return results
     

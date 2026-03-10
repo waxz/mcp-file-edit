@@ -33,7 +33,11 @@ pip install -e .
 ### HTTP Server Mode
 
 ```bash
-mcp-file-edit -t http -P 8000 -H 0.0.0.0 -p /mcp
+# windows
+$ENV:API_KEYS = "sk_qqqq"
+#linux
+API_KEYS = "sk_qqqq"
+mcp-file-edit -t http -P 8000 -H 0.0.0.0 -p /fs
 ```
 
 ### Claude Desktop Configuration
