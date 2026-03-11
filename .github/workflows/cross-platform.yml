@@ -35,4 +35,4 @@ jobs:
           uv pip install  .
 
       - name: Run MCP direct test runner
-        run: python test.py --mode direct --max-duration 90 --call-timeout 1.5 --output report.txt
+        run: python test.py --report report-${{ matrix.os }}.txt

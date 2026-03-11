@@ -87,16 +87,28 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_client(transport: str, url: str) -> Client:
+def build_client(args) -> Client:
+
+    transport = args.transport
+    url = args.url
+
     if transport == "http":
         return Client(url)
 
     from mcp_file_edit.server import build_server
+    from mcp_file_edit.mcp_utils import  parse_args
+    from mcp_file_edit import config
 
     old_argv = sys.argv[:]
     try:
         sys.argv = [sys.argv[0]]
-        server = build_server()
+        # server = build_server()
+        args, shells, shells_from_cli = parse_args()
+
+        config.SETTINGS = config.Settings.from_runtime(args, shells, shells_from_cli)
+
+        server = build_server(config.SETTINGS)
+
     finally:
         sys.argv = old_argv
     return Client(server)
@@ -600,7 +612,7 @@ def build_scenarios(paths: dict[str, Path]) -> list[Scenario]:
 
 
 async def run_scenarios(args: argparse.Namespace) -> int:
-    client = build_client(args.transport, args.url)
+    client = build_client(args)
  
     path = prepare_workspace()
     scenarios =build_scenarios(path)
