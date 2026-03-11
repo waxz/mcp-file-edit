@@ -8,10 +8,12 @@ PORT = 8001
 
 
 [CONFIG.windows]
-work_dir = "C:/Users/axdev/dev/repo"
+# work_dir = "C:/Users/axdev/dev/repo"
+work_dir = "."
 allow_direcotories = [".", "../", "./data"]
 
 
 [CONFIG.linux]
-work_dir = "/mnt/c/Users/axdev/dev/repo"
+# work_dir = "/mnt/c/Users/axdev/dev/repo"
+work_dir = "."
 allow_direcotories = [".", "../", "./data"]

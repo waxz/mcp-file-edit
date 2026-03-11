@@ -434,6 +434,10 @@ def remove_readonly(func, path, _):
     os.chmod(path, stat.S_IWRITE)
     func(path)
 
+def clean_workspace():
+    ws = PROJECT_ROOT / ".workspace"
+    if ws.exists():
+        shutil.rmtree(ws, onerror=remove_readonly)
 
 def prepare_workspace() -> dict[str, Path]:
     ws = PROJECT_ROOT / ".workspace/mcp_test_workspace"
@@ -642,6 +646,7 @@ async def run_scenarios(args: argparse.Namespace) -> int:
     report_path = report_path.resolve()
     write_report(report_path=report_path, args=args, results=results)
     print(f"Report written: {report_path}")
+    clean_workspace()
     return 0 if passed == total else 1
 
 
