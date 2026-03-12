@@ -69,17 +69,13 @@ class ApiKeyAuth(Middleware):
         headers = get_http_headers()
 
 
-        api_key = None
-        auth = headers.get("Authorization") or headers.get("authorization")
+        # Authentication may be stripped by reverse proxy, so check both cases
+        api_key = headers.get("X-Api-Key") or headers.get("x-api-key") or None
         
-        if auth:
-            auth_value = auth.split(" ")
-            api_key = auth_value[1]
-
         if api_key == self.valid_keys:
             return await call_next(context)
         else:
-            raise ToolError(f"Invalid api_key : {api_key}, authorization: {auth}, headers: {headers}, for protected tool: {tool_name}")
+            raise ToolError(f"Invalid api_key : {api_key}, headers: {headers}, for protected tool: {tool_name}")
 
         return await call_next(context)
 

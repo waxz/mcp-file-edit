@@ -6,6 +6,7 @@ HOST = "0.0.0.0"
 PATH = "/fs"
 PORT = 8001
 
+API_KEYS = "sk-123456"
 
 [CONFIG.windows]
 # work_dir = "C:/Users/axdev/dev/repo"
