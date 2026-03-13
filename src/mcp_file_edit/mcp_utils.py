@@ -22,37 +22,7 @@ from .models import (
 )
 
 from .tool_handlers import register_tools
-
-
-def parse_args() -> tuple[argparse.Namespace, dict[str, str], bool]:
-    """Parse CLI args and optional shell overrides."""
-    parser = argparse.ArgumentParser(description="MCP Server")
-    parser.add_argument("-d", "--directories", nargs="+", help="Allowed directories")
-    parser.add_argument(
-        "--shell",
-        action="append",
-        nargs=2,
-        metavar=("name", "path"),
-        help="Shell mapping (name path)",
-    )
-
-    parser.add_argument(
-        "-t",
-        "--transport",
-        type=str,
-        choices=["stdio", "http"],
-        default=None,
-        help="Server transport override",
-    )
-    parser.add_argument("-H", "--host", type=str, default=None)
-    parser.add_argument("-P", "--port", type=int, default=None)
-    parser.add_argument("-p", "--path", type=str, default=None)
-    parser.add_argument("-c", "--config", type=str, default="config.toml")
-
-    args = parser.parse_args()
-    shells_from_cli = bool(args.shell)
-    shells = {name: path for name, path in (args.shell or [])}
-    return args, shells, shells_from_cli
+from .config import parse_args
 
 
 class ApiKeyAuth(Middleware):

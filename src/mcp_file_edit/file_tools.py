@@ -330,11 +330,11 @@ async def read_file(
     
     # Check if file exists
     if not await utils.FILE_OPS.exists(file_path):
-        raise ValueError(f"File does not exist: {path}")
+        raise ValueError(f"File does not exist: {path}, file_path: {file_path}")
     
     # Verify it's a file
     if not await utils.FILE_OPS.is_file(file_path):
-        raise ValueError(f"Not a file: {path}")
+        raise ValueError(f"Not a file: {path}, file_path: {file_path}")
     
     file_type = utils.get_file_type(file_path)
     
@@ -417,7 +417,60 @@ async def write_file(
             result["relative_path"] = str(file_path)
     
     return result
+async def remove_directory(path:str):
+    """
+    Remove a directory.
 
+    """
+    dir_path = utils.resolve_path(path)
+    
+    # For local connections, check if path is safe
+    if utils.CONNECTION_TYPE == "local" and not utils.is_safe_path(dir_path):
+        raise ValueError("Invalid path: directory traversal detected")
+    
+    # Check if directory already exists
+    if await utils.FILE_OPS.exists(dir_path):
+        await utils.FILE_OPS.rmtree(dir_path)
+    else:
+        raise ValueError(f"Directory not exists: {path}")
+
+    return True
+
+
+
+async def create_directory(
+    path: str,
+    create_dirs: bool = False
+) -> Dict[str, Any]:
+    """
+    Create a new directory.
+
+    Args:
+        path: Directory path
+        create_dirs: Create parent directories if needed
+
+    Returns:
+        Directory information
+    """
+    dir_path = utils.resolve_path(path)
+    
+    # For local connections, check if path is safe
+    if utils.CONNECTION_TYPE == "local" and not utils.is_safe_path(dir_path):
+        raise ValueError("Invalid path: directory traversal detected")
+    
+    # Check if directory already exists
+    if await utils.FILE_OPS.exists(dir_path):
+        raise ValueError(f"Directory already exists: {path}")
+    
+    # Create parent directories if requested
+    if create_dirs:
+        await utils.FILE_OPS.makedirs(dir_path.parent, exist_ok=True)
+    
+    # Create the directory
+    await utils.FILE_OPS.makedirs(dir_path, exist_ok=True)
+    
+    # Return directory info
+    return await utils.get_file_info_async(dir_path)
 
 async def create_file(
     path: str,

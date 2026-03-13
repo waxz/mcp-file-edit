@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 import os
+import argparse
+import importlib.resources
 
-try:
-    import tomllib  # py311+
-except ModuleNotFoundError:  # pragma: no cover
-    tomllib = None
+CONFIG_FILE_PATH = str(importlib.resources.files("mcp_file_edit").joinpath("config.toml"))
+
 
 import logging
 import platform
@@ -24,6 +24,32 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 from .os_utils import check_installed
 from .path_utils import is_windows_style_path, normalize_directory_value,get_platform_path
+from . import utils
+
+
+
+def parse_args() -> tuple[argparse.Namespace, dict[str, str], bool]:
+    """Parse CLI args and optional shell overrides."""
+    parser = argparse.ArgumentParser(description="MCP Server")
+    parser.add_argument("-d", "--directories", nargs="+", help="Allowed directories")
+
+
+    parser.add_argument(
+        "-t",
+        "--transport",
+        type=str,
+        choices=["stdio", "http"],
+        default=None,
+        help="Server transport override",
+    )
+    parser.add_argument("-H", "--host", type=str, default=None)
+    parser.add_argument("-P", "--port", type=int, default=None)
+    parser.add_argument("-p", "--path", type=str, default=None)
+    parser.add_argument("-w", "--workdir", type=str, default=None)
+    parser.add_argument("-c", "--config", type=str, default="config.toml")
+
+    args = parser.parse_args()
+    return args
 
 
 
@@ -71,18 +97,33 @@ class Settings(BaseSettings):
         if self.TRANSPORT == "http" and not self.PATH:
             raise ValueError("PATH is required when TRANSPORT is 'http'")
 
-        self.ALLOWED_DIRECTORIES = [
+        # print(f"origin WORK_DIR:{self.WORK_DIR}")
+        # print(f"origin ALLOWED_DIRECTORIES:{self.ALLOWED_DIRECTORIES}")
+
+        self.WORK_DIR = get_platform_path(".", self.PLATFORM, self.WORK_DIR)
+        utils.PROJECT_DIR = Path(self.WORK_DIR)
+        utils.BASE_DIR = Path(self.WORK_DIR)
+
+        ALLOWED_DIRECTORIES = [
             get_platform_path(f, self.PLATFORM, self.WORK_DIR)
             for f in self.ALLOWED_DIRECTORIES
         ]
+        self.ALLOWED_DIRECTORIES = [
+            f 
+            for f in ALLOWED_DIRECTORIES if utils.is_safe_path(Path(f))
+        ]
+
+        # print(f"self.WORK_DIR:{self.WORK_DIR}")
+        # print(f"utils.PROJECT_DIR:{utils.PROJECT_DIR}")
+        # print(f"utils.BASE_DIR:{utils.BASE_DIR}")
+        # print(f"ALLOWED_DIRECTORIES:{ALLOWED_DIRECTORIES}")
+        # print(f"self.ALLOWED_DIRECTORIES:{self.ALLOWED_DIRECTORIES}")
         return self
 
     @classmethod
     def from_runtime(
         cls,
-        args: Namespace,
-        parsed_shells: dict[str, str],
-        shells_from_cli: bool,
+        args: Namespace
     ) -> "Settings":
         """Load settings with precedence: defaults -> config.toml -> CLI."""
         system_name = platform.system().lower()
@@ -97,21 +138,16 @@ class Settings(BaseSettings):
             "PLATFORM": platform_name,
         }
 
+        config_path = Path(CONFIG_FILE_PATH)
+        if config_path.exists():
+            file_config = toml.load(config_path)
+            merged.update(file_config)
+
         config_path = Path(getattr(args, "config", "config.toml") or "config.toml")
         if config_path.exists():
             file_config = toml.load(config_path)
             merged.update(file_config)
 
-
-
-        if getattr(args, "transport", None):
-            merged["TRANSPORT"] = args.transport
-        if getattr(args, "host", None):
-            merged["HOST"] = args.host
-        if getattr(args, "port", None):
-            merged["PORT"] = args.port
-        if args.path:
-            merged["PATH"] = args.path
 
 
         config_os = merged.get("CONFIG", {}).get(platform_name, {})
@@ -121,7 +157,17 @@ class Settings(BaseSettings):
             if config_os.get("allow_directories") is not None
             else config_os.get("allow_direcotories")
         )
-        # print("merged:",merged)
+        if getattr(args, "transport", None):
+            merged["TRANSPORT"] = args.transport
+        if getattr(args, "host", None):
+            merged["HOST"] = args.host
+        if getattr(args, "port", None):
+            merged["PORT"] = args.port
+        if args.path:
+            merged["PATH"] = args.path
+        if args.workdir:
+            merged["WORK_DIR"] = args.workdir
+
 
         if getattr(args, "directories", None):
             merged["ALLOWED_DIRECTORIES"] = list(args.directories)

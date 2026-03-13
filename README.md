@@ -20,7 +20,14 @@ A Model Context Protocol (MCP) server for comprehensive file system operations w
 ```bash
 git clone https://github.com/patrickomatik/mcp-file-edit.git
 cd mcp-file-edit
-uv pip install -e .[all]
+uv pip install  .[all]
+
+uv build --wheel
+
+uv pip uninstall mcp-file-edit
+
+uv pip install dist/mcp_file_edit-2.0-py3-none-any.whl
+uv pip install "dist/mcp_file_edit-2.0-py3-none-any.whl[all]"
 ```
 
 Or with pip:

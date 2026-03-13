@@ -5,10 +5,8 @@ def check_installed(exe:str):
     docker_path = shutil.which(exe)
 
     if docker_path:
-        # print(f"{exe} is installed at: {docker_path}")
         return True
 
     else:
-        # print("{exe} is not installed or not in PATH.")
         return False
 

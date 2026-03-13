@@ -106,10 +106,10 @@ BINARY_EXTENSIONS = {
 }
 
 # Global base directory (startup cwd; retained for compatibility in outputs/tests)
-BASE_DIR = Path.cwd()
+BASE_DIR: Optional[Path] = None
 
 # Global project directory: single authoritative local root for path safety/routing
-PROJECT_DIR: Optional[Path] = BASE_DIR
+PROJECT_DIR: Optional[Path] = None
 
 # Global file operations backend and SSH manager
 FILE_OPS: FileOperationsInterface = LocalFileOperations()
@@ -199,7 +199,7 @@ def is_safe_path(path: Path) -> bool:
         return False
 
 
-def resolve_path(path: str) -> Path:
+def resolve_path(path: str, work_dir: str | None = None) -> Path:
     """
     Resolve a path relative to PROJECT_DIR for local/SSH operations.
     
@@ -215,10 +215,11 @@ def resolve_path(path: str) -> Path:
     """
     validate_path_input(path)
     path_obj = Path(path)
-    
     if path_obj.is_absolute():
         return path_obj
 
+    if work_dir:
+        return Path(work_dir)/ path
     if PROJECT_DIR:
         return PROJECT_DIR / path
 

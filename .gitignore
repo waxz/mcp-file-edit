@@ -21,6 +21,7 @@ wheels/
 *.egg
 .agent
 
+.mypy_cache*
 .workspace/*
 # Virtual Environment
 venv/

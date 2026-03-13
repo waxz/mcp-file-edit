@@ -34,9 +34,9 @@ def main() -> None:
     logging.getLogger("mcp").setLevel(logging.INFO)
     logging.info("Starting server...")
 
-    args, shells, shells_from_cli = parse_args()
+    args = parse_args()
 
-    config.SETTINGS = config.Settings.from_runtime(args, shells, shells_from_cli)
+    config.SETTINGS = config.Settings.from_runtime(args)
 
     app = build_server(config.SETTINGS)
     

@@ -6,15 +6,15 @@ HOST = "0.0.0.0"
 PATH = "/fs"
 PORT = 8001
 
-API_KEYS = "sk-123456"
+# API_KEYS = "sk-123456"
 
 [CONFIG.windows]
-# work_dir = "C:/Users/axdev/dev/repo"
+# work_dir = "C:/Users/axdev/dev/repo/tests"
 work_dir = "."
 allow_direcotories = [".", "../", "./data"]
 
 
 [CONFIG.linux]
-# work_dir = "/mnt/c/Users/axdev/dev/repo"
+# work_dir = "/mnt/c/Users/axdev/dev/repo/tests/"
 work_dir = "."
-allow_direcotories = [".", "../", "./data"]
+allow_direcotories = ["/mnt/c/Users/axdev/dev/repo/tests", ".", "../", "./data"]

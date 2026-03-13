@@ -43,6 +43,9 @@ from .file_tools import (
     replace_in_files as replace_in_files_,
     patch_file as patch_file_,
     get_file_info as get_file_info_,
+    create_directory as create_directory_,
+    remove_directory as remove_directory_,
+
 )
 
 
@@ -99,55 +102,6 @@ logger = logging.getLogger(__name__)
 def register_tools(server: FastMCP) -> None:
     """Register MCP tools."""
 
-    async def _execute_with_stream(
-        command: str,
-        cwd: str,
-        ctx: Context,
-        shell: str,
-        is_trusted: bool|None = None,
-    ) -> ExecutionResult:
-        async def _on_stdout(line: str) -> None:
-            try:
-                await ctx.info(line)
-            except ClosedResourceError:
-                pass
-
-        async def _on_stderr(line: str) -> None:
-            try:
-                await ctx.warning(line)
-            except ClosedResourceError:
-                pass
-
-        try:
-            result = await run_shell_command(
-                command=command,
-                cwd=cwd,
-                shell=shell,
-                on_stdout=_on_stdout,
-                on_stderr=_on_stderr,
-                is_trusted=is_trusted
-            )
-        except ClosedResourceError:
-            return ExecutionResult(stderr="[client disconnected]")
-            # return [types.TextContent(type="text", text="[client disconnected]")]
-
-
-        if result.cancelled:
-            return ExecutionResult(stderr="[client disconnected]")
-            # return [types.TextContent(type="text", text="[client disconnected]")]
-
-        parts: list[str] = []
-        if result.stdout:
-            parts.append(result.stdout)
-        if result.stderr:
-            parts.append(f"[stderr]\n{result.stderr}")
-        parts.append(f"[exit code: {result.exit_code}]")
-        if result.timed_out and config.SETTINGS is not None:
-            parts.append(f"[timed out after {config.SETTINGS.COMMAND_TIMEOUT}s]")
-        if not result.exit_code == 0:
-            raise ValueError(f"{parts}")
-        return result
-        # return [types.TextContent(type="text", text="\n\n".join(parts))]
 
     # File Management Tools
     @server.tool(task=TaskConfig(mode="optional"))
@@ -179,6 +133,21 @@ def register_tools(server: FastMCP) -> None:
     ) -> Any:
         """Write content to a file. Returns path and size; raises ValueError for invalid paths or write errors."""
         return await write_file_(path, content, encoding, create_dirs)
+
+    @server.tool
+    async def create_directory(
+        path: str,
+        create_dirs: bool = False
+    ) -> Any:
+        """Create a new directory. Returns directory info; raises ValueError for invalid paths or directory already exists."""
+        return await create_directory_(path, create_dirs)
+    @server.tool
+    async def remove_directory(
+        path: str,
+        create_dirs: bool = False
+    ) -> bool:
+        """Remove a directory. raises ValueError for invalid paths or directory not exists."""
+        return await remove_directory_(path)
 
 
     @server.tool
@@ -503,7 +472,8 @@ def register_tools(server: FastMCP) -> None:
 
             await SSH_MANAGER.close()
 
-            project_path = Path(path).resolve()
+            project_path = utils.resolve_path(path,config.SETTINGS.WORK_DIR)
+            #Path(path).resolve()
 
             if not project_path.exists():
                 raise ValueError(f"Project directory does not exist: {path}")

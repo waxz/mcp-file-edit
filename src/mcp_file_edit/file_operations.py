@@ -96,6 +96,10 @@ class FileOperationsInterface(ABC):
         """Search for pattern in files."""
         pass
 
+def handle_remove_readonly(func, path, excinfo):
+    """Clear the readonly bit and re-attempt the removal."""
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
 
 class LocalFileOperations(FileOperationsInterface):
     """Local filesystem operations implementation."""
@@ -138,7 +142,7 @@ class LocalFileOperations(FileOperationsInterface):
         path.unlink()
     
     async def rmtree(self, path: Path) -> None:
-        await asyncio.to_thread(shutil.rmtree, path)
+        await asyncio.to_thread(shutil.rmtree, path,onexc=handle_remove_readonly)
     
     async def rename(self, src: Path, dst: Path) -> None:
         src.rename(dst)
@@ -190,7 +194,7 @@ class LocalFileOperations(FileOperationsInterface):
                         yield subitem
         except PermissionError:
             pass
-
+    
 
 class SSHFileOperations(FileOperationsInterface):
     """SSH-based filesystem operations implementation."""

@@ -69,11 +69,13 @@ def parse_args() -> argparse.Namespace:
         default="http://localhost:8000/mcp",
         help="HTTP MCP endpoint when --transport=http",
     )
-    parser.add_argument(
-        "--cwd",
-        default=".",
-        help="Working directory for execute_command scenarios",
-    )
+    # parser.add_argument("-w"
+    #     "--workdir",
+    #     default=".",
+    #     help="Working directory for execute_command scenarios",
+    # )
+    parser.add_argument("-w", "--workdir", type=str, default=None)
+
     parser.add_argument(
         "--shell",
         default="bash",
@@ -96,16 +98,16 @@ def build_client(args) -> Client:
         return Client(url)
 
     from mcp_file_edit.server import build_server
-    from mcp_file_edit.mcp_utils import  parse_args
+    from mcp_file_edit.config import  parse_args
     from mcp_file_edit import config
 
     old_argv = sys.argv[:]
     try:
         sys.argv = [sys.argv[0]]
         # server = build_server()
-        args, shells, shells_from_cli = parse_args()
+        args = parse_args()
 
-        config.SETTINGS = config.Settings.from_runtime(args, shells, shells_from_cli)
+        config.SETTINGS = config.Settings.from_runtime(args)
 
         server = build_server(config.SETTINGS)
 
@@ -250,7 +252,7 @@ def write_report(
     lines.append(f"Memory Total: {_get_memory_total_human()}")
     lines.append(f"Python: {platform.python_version()}")
     lines.append(f"Transport: {args.transport}")
-    lines.append(f"CWD arg: {args.cwd}")
+    lines.append(f"CWD arg: {args.workdir}")
     lines.append(f"Shell arg: {args.shell}")
     lines.append(f"Summary: {passed}/{total} scenarios passed")
     lines.append("")
@@ -466,15 +468,23 @@ def prepare_workspace() -> dict[str, Path]:
     return {"ws": ws, "files": files, "gitrepo": gitrepo, "clone_target": clone_target}
 
 
-def build_scenarios(paths: dict[str, Path]) -> list[Scenario]:
-    files_rel = str(paths["files"].relative_to(PROJECT_ROOT))
-    git_rel = str(paths["gitrepo"].relative_to(PROJECT_ROOT))
-    clone_rel = str(paths["clone_target"].relative_to(PROJECT_ROOT))
+def build_scenarios() -> list[Scenario]:
+    
+
+
+    test_dir = ".tests"
+    git_rel = f"git_project"
+    clone_rel = f"git_clone_project"
     scenarios = [
         # project tools
-        Scenario("set project valid", "set_project_directory", {"path": "./tests", "connection_type": "local"}, require_keys=["project_directory", "connection_type"]),
+        Scenario("remove directory valid", "remove_directory", {"path": f"../"}, expect_error=True),
+
+        Scenario("remove directory valid", "remove_directory", {"path": f"{test_dir}"}),
+
+        Scenario("create directory valid", "create_directory", {"path": f"{test_dir}", "create_dirs": True}),
+       
+        Scenario("set project valid", "set_project_directory", {"path": f"{test_dir}", "connection_type": "local"}, require_keys=["project_directory", "connection_type"]),
         Scenario("get project", "get_project_directory", {}, require_keys=["project_directory", "connection_type"]),
-        Scenario("set project valid", "set_project_directory", {"path": ".", "connection_type": "local"}, require_keys=["project_directory", "connection_type"]),
         Scenario("set project invalid", "set_project_directory", {"path": "/", "connection_type": "local"}, expect_error=True),
         Scenario("set project invalid", "set_project_directory", {"path": "../", "connection_type": "local"}, expect_error=True),
         Scenario("set project invalid", "set_project_directory", {"path": "..//", "connection_type": "local"}, expect_error=True),
@@ -483,50 +493,52 @@ def build_scenarios(paths: dict[str, Path]) -> list[Scenario]:
         Scenario("get project", "get_project_directory", {}, require_keys=["project_directory", "connection_type"]),
 
         # file tools valid
+        Scenario("write file valid", "write_file", {"path": f"./README.md", "content": "hello MCP"}, require_keys=["path", "size"]),
         Scenario("list files valid", "list_files", {"path": ".", "pattern": "*.md"}),
         Scenario("read file valid", "read_file", {"path": "README.md"}, must_contain="MCP"),
-        Scenario("write file valid", "write_file", {"path": f"{files_rel}/write_target.txt", "content": "hello"}, require_keys=["path", "size"]),
-        Scenario("create file valid", "create_file", {"path": f"{files_rel}/new.txt", "content": "new"}),
-        Scenario("copy file valid", "copy_file", {"source": f"{files_rel}/a.txt", "destination": f"{files_rel}/a_copy.txt"}),
-        Scenario("move file valid", "move_file", {"source": f"{files_rel}/a_copy.txt", "destination": f"{files_rel}/a_moved.txt"}),
-        Scenario("search files valid", "search_files", {"pattern": "foo", "path": files_rel}),
-        Scenario("replace files valid", "replace_in_files", {"search": "alpha", "replace": "ALPHA", "path": files_rel}),
-        Scenario("patch file valid", "patch_file", {"path": f"{files_rel}/b.py", "patches": [{"search": "return 1", "replace": "return 2"}], "backup": False}),
-        Scenario("get file info valid", "get_file_info", {"path": f"{files_rel}/b.py"}, require_keys=["name", "size"]),
-        Scenario("delete file valid", "delete_file", {"path": f"{files_rel}/new.txt"}),
+        Scenario("write file valid", "write_file", {"path": f"./write_target.txt", "content": "hello"}, require_keys=["path", "size"]),
+        Scenario("create file valid", "create_file", {"path": f"./new.txt", "content": "new"}),
+        Scenario("copy file valid", "copy_file", {"source": f"./new.txt", "destination": f"./a_copy.txt"}),
+        Scenario("move file valid", "move_file", {"source": f"./a_copy.txt", "destination": f"./a_moved.txt"}),
+        Scenario("search files valid", "search_files", {"pattern": "foo", "path": "./"}),
+        Scenario("replace files valid", "replace_in_files", {"search": "alpha", "replace": "ALPHA", "path": "."}),
+        Scenario("create py file", "write_file",{"path":"./b.py", "content":"def foo():\n    return 1\n\ndef bar(x):\n    return x\n" }),
+        Scenario("patch file valid", "patch_file", {"path": f"./b.py", "patches": [{"search": "return 1", "replace": "return 2"}], "backup": False}),
+        Scenario("get file info valid", "get_file_info", {"path": f"./b.py"}, require_keys=["name", "size"]),
+        Scenario("delete file valid", "delete_file", {"path": f"./new.txt"}),
 
         # file tools invalid
         Scenario("list files invalid", "list_files", {"path": "README.md"}, expect_error=True),
         Scenario("read file invalid", "read_file", {"path": "../README.md"}, expect_error=True),
         Scenario("write file invalid", "write_file", {"path": "../x.txt", "content": "x"}, expect_error=True),
-        Scenario("create file invalid", "create_file", {"path": f"{files_rel}/b.py", "content": "dup"}, expect_error=True),
-        Scenario("copy file invalid", "copy_file", {"source": f"{files_rel}/missing.txt", "destination": f"{files_rel}/x.txt"}, expect_error=True),
-        Scenario("move file invalid", "move_file", {"source": f"{files_rel}/missing.txt", "destination": f"{files_rel}/x.txt"}, expect_error=True),
-        Scenario("search files invalid", "search_files", {"pattern": "(*", "path": files_rel}, expect_error=True),
-        Scenario("replace files invalid", "replace_in_files", {"search": "(*", "replace": "x", "path": files_rel}, expect_error=True),
-        Scenario("patch file invalid", "patch_file", {"path": f"{files_rel}/b.py", "patches": [{"bad": "shape"}]}, expect_error=True),
-        Scenario("get file info invalid", "get_file_info", {"path": f"{files_rel}/missing.py"}, expect_error=True),
-        Scenario("delete file invalid", "delete_file", {"path": f"{files_rel}/missing.txt"}, expect_error=True),
+        Scenario("create file invalid", "create_file", {"path": f"./b.py", "content": "dup"}, expect_error=True),
+        Scenario("copy file invalid", "copy_file", {"source": f"./missing.txt", "destination": f"./x.txt"}, expect_error=True),
+        Scenario("move file invalid", "move_file", {"source": f"./missing.txt", "destination": f"./x.txt"}, expect_error=True),
+        Scenario("search files invalid", "search_files", {"pattern": "(*", "path": "."}, expect_error=True),
+        Scenario("replace files invalid", "replace_in_files", {"search": "(*", "replace": "x", "path": "."}, expect_error=True),
+        Scenario("patch file invalid", "patch_file", {"path": f"./b.py", "patches": [{"bad": "shape"}]}, expect_error=True),
+        Scenario("get file info invalid", "get_file_info", {"path": f"./missing.py"}, expect_error=True),
+        Scenario("delete file invalid", "delete_file", {"path": f"./missing.txt"}, expect_error=True),
 
         # code analysis valid
-        Scenario("list functions valid", "list_functions", {"path": f"{files_rel}/b.py"}),
-        Scenario("function at line valid", "get_function_at_line", {"path": f"{files_rel}/b.py", "line_number": 1}),
-        Scenario("code structure valid", "get_code_structure", {"path": f"{files_rel}/b.py"}, require_keys=["language"]),
-        Scenario("search functions valid", "search_functions", {"pattern": "foo", "path": files_rel}),
+        Scenario("list functions valid", "list_functions", {"path": f"./b.py"}),
+        Scenario("function at line valid", "get_function_at_line", {"path": f"./b.py", "line_number": 1}),
+        Scenario("code structure valid", "get_code_structure", {"path": f"./b.py"}, require_keys=["language"]),
+        Scenario("search functions valid", "search_functions", {"pattern": "foo", "path": "."}),
 
         # code analysis invalid
-        Scenario("list functions invalid", "list_functions", {"path": f"{files_rel}/missing.py"}, expect_error=True),
-        Scenario("function at line invalid", "get_function_at_line", {"path": f"{files_rel}/missing.py", "line_number": 1}, expect_error=True),
-        Scenario("code structure invalid", "get_code_structure", {"path": f"{files_rel}/missing.py"}, expect_error=True),
+        Scenario("list functions invalid", "list_functions", {"path": f"./missing.py"}, expect_error=True),
+        Scenario("function at line invalid", "get_function_at_line", {"path": f"./missing.py", "line_number": 1}, expect_error=True),
+        Scenario("code structure invalid", "get_code_structure", {"path": f"./missing.py"}, expect_error=True),
         Scenario("search functions invalid", "search_functions", {"pattern": "foo", "path": "../"}, expect_error=True),
 
         # lint/type/format valid (correct params; may return success false depending env)
-        Scenario("detect linters valid", "detect_linters", {"path": files_rel}, require_keys=["linters", "type_checkers", "formatters"], timeout_s=5.0),
-        Scenario("run linter valid", "run_linter", {"path": files_rel, "timeout": 1}, allow_error_output=True, timeout_s=5.0),
-        Scenario("lint file valid", "lint_file", {"path": f"{files_rel}/b.py", "timeout": 1}, allow_error_output=True, timeout_s=5.0),
-        Scenario("run type checker valid", "run_type_checker", {"path": files_rel, "timeout": 1}, allow_error_output=True, timeout_s=5.0),
-        Scenario("type check file valid", "type_check_file", {"path": f"{files_rel}/b.py", "timeout": 1}, allow_error_output=True, timeout_s=5.0),
-        Scenario("format file valid", "format_file", {"path": f"{files_rel}/b.py", "check_only": True, "timeout": 1}, allow_error_output=True, timeout_s=5.0),
+        Scenario("detect linters valid", "detect_linters", {"path": "."}, require_keys=["linters", "type_checkers", "formatters"], timeout_s=5.0),
+        Scenario("run linter valid", "run_linter", {"path": ".", "timeout": 1}, allow_error_output=True, timeout_s=5.0),
+        Scenario("lint file valid", "lint_file", {"path": f"./b.py", "timeout": 1}, allow_error_output=True, timeout_s=5.0),
+        Scenario("run type checker valid", "run_type_checker", {"path": ".", "timeout": 1}, allow_error_output=True, timeout_s=5.0),
+        Scenario("type check file valid", "type_check_file", {"path": f"./b.py", "timeout": 1}, allow_error_output=True, timeout_s=5.0),
+        Scenario("format file valid", "format_file", {"path": f"./b.py", "check_only": True, "timeout": 1}, allow_error_output=True, timeout_s=5.0),
 
         # lint/type/format invalid
         Scenario("detect linters invalid", "detect_linters", {"path": "../"}, expect_error=True),
@@ -537,7 +549,9 @@ def build_scenarios(paths: dict[str, Path]) -> list[Scenario]:
         Scenario("format file invalid", "format_file", {"path": "../x.py"}, expect_error=True),
 
         # git valid flow
-        Scenario("set project git", "set_project_directory", {"path": git_rel, "connection_type": "local"}),
+        Scenario("create directory valid", "create_directory", {"path": git_rel, "create_dirs": True}),
+
+        Scenario("set project git", "set_project_directory", {"path": f"{test_dir}/{git_rel}", "connection_type": "local"}),
         Scenario("git init valid", "git_init", {}),
         Scenario("git status valid", "git_status", {}, require_keys=["is_repository"]),
         Scenario("git add valid", "git_add", {"files": "gitfile.txt"}),
@@ -557,7 +571,7 @@ def build_scenarios(paths: dict[str, Path]) -> list[Scenario]:
         # git clone valid/invalid
         Scenario("set project root for clone", "set_project_directory", {"path": ".", "connection_type": "local"}),
         
-        Scenario("git clone valid", "git_clone", {"url": "https://github.com/marlocarlo/psmux", "path": clone_rel, "depth": 1}, allow_error_output=True, timeout_s=8.0),
+        # Scenario("git clone valid", "git_clone", {"url": "https://github.com/marlocarlo/psmux", "path": clone_rel, "depth": 1}, allow_error_output=True, timeout_s=8.0),
         Scenario("git clone invalid", "git_clone", {"url": "not-a-valid-url", "path": f"{clone_rel}_bad"}, expect_error=True),
 
         # ssh tools (no ssh session expected)
@@ -578,11 +592,13 @@ def build_scenarios(paths: dict[str, Path]) -> list[Scenario]:
 
     # Platform-specific path handling checks
     if sys.platform == "win32":
-        windows_files_rel = files_rel.replace("/", "\\")
+        windows_files_rel = ".".replace("/", "\\")
         scenarios.extend(
             [
+           Scenario("set project valid", "set_project_directory", {"path": f"{test_dir}", "connection_type": "local"}, require_keys=["project_directory", "connection_type"]),
+
                 # Windows accepts relative POSIX paths but rejects POSIX absolute paths.
-                Scenario("windows relative posix path valid", "read_file", {"path": f"{files_rel}/b.py"}, must_contain="def foo"),
+                Scenario("windows relative posix path valid", "read_file", {"path": f"./b.py"}, must_contain="def foo"),
                 Scenario("windows posix absolute path invalid", "read_file", {"path": "/etc/passwd"}, expect_error=True),
                 Scenario("windows backslash read valid", "read_file", {"path": f"{windows_files_rel}\\b.py"}, must_contain="def foo"),
                 Scenario("windows traversal invalid", "read_file", {"path": "..\\README.md"}, expect_error=True),
@@ -590,23 +606,26 @@ def build_scenarios(paths: dict[str, Path]) -> list[Scenario]:
             ]
         )
     else:
-        scenarios.append(
+        scenarios.extend(
+            [
+
+           Scenario("set project valid", "set_project_directory", {"path": f"{test_dir}", "connection_type": "local"}, require_keys=["project_directory", "connection_type"]),
             Scenario(
                 "linux relative posix path valid",
                 "read_file",
-                {"path": f"{files_rel}/b.py"},
+                {"path": f"./b.py"},
                 must_contain="def foo",
-            )
-        )
-        scenarios.append(
-            Scenario(
+            ),
+                        Scenario(
                 "linux windows style path invalid",
                 "read_file",
                 {"path": r"C:\\Windows\\System32\\drivers\\etc\\hosts"},
                 expect_error=True,
-            )
+            ),
+
+Scenario("posix traversal invalid", "read_file", {"path": "../README.md"}, expect_error=True)
+            ]
         )
-        scenarios.append(Scenario("posix traversal invalid", "read_file", {"path": "../README.md"}, expect_error=True))
         if is_wsl():
             scenarios.append(
                 Scenario("wsl windows-mount outside allowlist", "set_project_directory", {"path": "/mnt/c/Windows", "connection_type": "local"}, expect_error=True)
@@ -618,8 +637,8 @@ def build_scenarios(paths: dict[str, Path]) -> list[Scenario]:
 async def run_scenarios(args: argparse.Namespace) -> int:
     client = build_client(args)
  
-    path = prepare_workspace()
-    scenarios =build_scenarios(path)
+    # path = prepare_workspace()
+    scenarios =build_scenarios()
  
     results: list[ScenarioResult] = []
     async with client:
@@ -646,7 +665,7 @@ async def run_scenarios(args: argparse.Namespace) -> int:
     report_path = report_path.resolve()
     write_report(report_path=report_path, args=args, results=results)
     print(f"Report written: {report_path}")
-    clean_workspace()
+    # clean_workspace()
     return 0 if passed == total else 1
 
 

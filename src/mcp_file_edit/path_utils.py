@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import posixpath
-from pathlib import PurePosixPath, PureWindowsPath
+from pathlib import PurePosixPath, PureWindowsPath, Path,WindowsPath
 
 
 def is_windows_style_path(path_text: str) -> bool:
@@ -56,17 +56,23 @@ def get_platform_path(path: str, platform: str, work_dir: str | None) -> str:
         return text
 
     if platform == "windows":
-        base = PureWindowsPath(work_dir or os.getcwd())
-        windows_path = PureWindowsPath(text)
-        if windows_path.is_absolute():
-            return str(windows_path)
-        return str(base / windows_path)
+        base = WindowsPath(work_dir or os.getcwd())
+        posix_path = WindowsPath(text)
+
+        if not posix_path.is_absolute():
+            posix_path = base / posix_path
+
+        return str(posix_path.resolve())
 
     if is_windows_style_path(text):
         raise ValueError(f"Invalid path {text} in {platform} env")
 
-    base = PurePosixPath(work_dir or os.getcwd())
-    posix_path = PurePosixPath(text)
-    if posix_path.is_absolute():
-        return str(posix_path)
-    return str(base / posix_path)
+    base = Path(work_dir or os.getcwd())
+    
+    posix_path = Path(text)
+
+    if not posix_path.is_absolute():
+        posix_path = base / posix_path
+
+
+    return str(posix_path.resolve())

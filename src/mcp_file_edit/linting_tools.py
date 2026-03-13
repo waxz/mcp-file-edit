@@ -13,7 +13,8 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
-from .utils import resolve_path, is_safe_path, get_file_type
+from . import utils
+# resolve_path, is_safe_path, get_file_type
 
 
 LINTER_CONFIG_FILES = {
@@ -249,8 +250,8 @@ async def detect_linters(path: str = ".") -> Dict[str, Any]:
     Returns:
         Dictionary with available tools and detected config files.
     """
-    resolved = resolve_path(path)
-    if not is_safe_path(resolved):
+    resolved = utils.resolve_path(path)
+    if not utils.is_safe_path(resolved):
         raise ValueError(f"Path not allowed: {path}")
 
     project_path = Path(resolved)
@@ -326,13 +327,23 @@ async def run_linter(
     Returns:
         Dictionary with lint results.
     """
-    resolved = resolve_path(path)
-    if not is_safe_path(resolved):
-        raise ValueError(f"Path not allowed: {path}")
 
-    project_path = Path(resolved)
-    if not project_path.exists():
+    target_path = utils.resolve_path(path)
+
+    if not utils.is_safe_path(target_path):
+        raise ValueError(f"Path not allowed: {path}, target_path:{target_path}")
+
+    # Check if path exists
+    if not await utils.FILE_OPS.exists(target_path):
         raise ValueError(f"Path does not exist: {path}")
+
+    # Verify it's a directory
+    # if not await utils.FILE_OPS.is_dir(target_path):
+    #     raise ValueError(f"3Path is not a directory: {path}, target_path:{target_path}")
+
+    project_path = Path(target_path)
+    if not project_path.exists():
+        raise ValueError(f"4Path does not exist: {path}, target_path: {target_path}, project_path:{project_path}")
 
     work_dir = str(project_path.parent) if project_path.is_file() else str(project_path)
 
@@ -449,8 +460,8 @@ async def run_type_checker(
     Returns:
         Dictionary with type check results.
     """
-    resolved = resolve_path(path)
-    if not is_safe_path(resolved):
+    resolved = utils.resolve_path(path)
+    if not utils.is_safe_path(resolved):
         raise ValueError(f"Path not allowed: {path}")
 
     project_path = Path(resolved)
@@ -539,13 +550,13 @@ async def format_file(
     Returns:
         Dictionary with format results.
     """
-    resolved = resolve_path(path)
-    if not is_safe_path(resolved):
+    resolved = utils.resolve_path(path)
+    if not utils.is_safe_path(resolved):
         raise ValueError(f"Path not allowed: {path}")
 
     file_path = Path(resolved)
     if not file_path.exists():
-        raise ValueError(f"File does not exist: {path}")
+        raise ValueError(f"File does not exist: {path}, file_path:{file_path}")
 
     work_dir = str(file_path.parent)
 
