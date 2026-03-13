@@ -22,7 +22,23 @@ from .models import (
 )
 
 from .tool_handlers import register_tools
-from .config import parse_args
+
+def extract_auth():
+    headers = get_http_headers()
+
+    # 1. Try Authorization header (Bearer token)
+    auth = headers.get("Authorization") or headers.get("authorization")
+    if auth:
+        parts = auth.split()
+        # Returns the second part if "Bearer <key>", otherwise returns the whole string
+        return parts[1] if len(parts) > 1 and parts[0].lower() in ["bearer", "bear"] else parts[0]
+
+    # 2. Fallback to x-api-key
+    x_api_key = headers.get("x-api-key") or headers.get("X-API-Key")
+    if x_api_key:
+        return x_api_key.strip()
+
+    return None
 
 
 class ApiKeyAuth(Middleware):
@@ -31,7 +47,6 @@ class ApiKeyAuth(Middleware):
 
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         tool_name = context.message.name
-
          
         # if self.protected_tools and tool_name not in self.protected_tools:
         #     return await call_next(context)
@@ -39,8 +54,7 @@ class ApiKeyAuth(Middleware):
         headers = get_http_headers()
 
 
-        # Authentication may be stripped by reverse proxy, so check both cases
-        api_key = headers.get("X-Api-Key") or headers.get("x-api-key") or None
+        api_key = extract_auth()
         
         if api_key == self.valid_keys:
             return await call_next(context)

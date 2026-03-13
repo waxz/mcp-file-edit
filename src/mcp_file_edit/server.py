@@ -14,7 +14,8 @@ from fastmcp.server.dependencies import get_http_headers
 from fastmcp.exceptions import ToolError
 
 from . import config
-from .mcp_utils import ApiKeyAuth,build_server,parse_args
+from .config import parse_args
+from .mcp_utils import ApiKeyAuth,build_server
 from .tool_handlers import register_tools
 
 

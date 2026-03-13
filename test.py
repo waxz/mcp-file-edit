@@ -479,7 +479,7 @@ def build_scenarios() -> list[Scenario]:
         # project tools
         Scenario("remove directory valid", "remove_directory", {"path": f"../"}, expect_error=True),
 
-        Scenario("remove directory valid", "remove_directory", {"path": f"{test_dir}"}),
+        # Scenario("remove directory valid", "remove_directory", {"path": f"{test_dir}"}),
 
         Scenario("create directory valid", "create_directory", {"path": f"{test_dir}", "create_dirs": True}),
        

@@ -22,6 +22,7 @@ wheels/
 .agent
 
 .mypy_cache*
+.test*
 .workspace/*
 # Virtual Environment
 venv/
