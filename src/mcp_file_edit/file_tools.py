@@ -8,6 +8,7 @@ import base64
 from pathlib import Path
 from typing import List, Dict, Any, Optional, AsyncIterator, Iterator
 from datetime import datetime
+from dataclasses import dataclass, field
 
 from . import utils
 
@@ -180,7 +181,7 @@ class FilePatcher:
                     })
         
         return content, change_info
-    
+
     @staticmethod
     def apply_context_patch(lines: List[str], patch: Dict[str, Any]) -> tuple[List[str], Dict[str, Any]]:
         """Apply a context-based patch"""
@@ -196,10 +197,8 @@ class FilePatcher:
         # Find the context in the file
         for i in range(len(lines_normalized) - len(context_normalized) + 1):
             if lines_normalized[i:i + len(context_normalized)] == context_normalized:
-                # Found the context, apply the replacement
                 old_content = lines[i:i + len(context_normalized)]
                 
-                # Prepare replacement with proper line endings
                 new_lines = []
                 for j, new_line in enumerate(replacement_lines):
                     if j < len(old_content) and old_content[j].endswith('\n'):
@@ -219,27 +218,327 @@ class FilePatcher:
                 break
         
         return lines, change_info
-    
+
     @staticmethod
     def apply_unified_diff_patch(content: str, patch_content: str) -> tuple[str, Dict[str, Any]]:
-        """Apply a unified diff format patch"""
+        """Apply a minimal unified diff hunk to content."""
         change_info = {"type": "unified_diff", "success": False}
-        
-        # Parse the unified diff
-        original_lines = content.splitlines(keepends=True)
-        patch_lines = patch_content.splitlines(keepends=True)
-        
-        # Simple implementation - for more complex patches, consider using python-patch
-        # This is a basic implementation that handles simple unified diffs
+        patch_lines = patch_content.splitlines()
+        hunks: List[PatchHunk] = []
+        current_hunk: Optional[PatchHunk] = None
+
+        for line in patch_lines:
+            if line.startswith(("--- ", "+++ ")):
+                continue
+            if line.startswith("@@"):
+                if current_hunk and current_hunk.lines:
+                    hunks.append(current_hunk)
+                current_hunk = PatchHunk()
+                continue
+            if line == "*** End of File":
+                if current_hunk is None:
+                    current_hunk = PatchHunk()
+                current_hunk.no_newline_at_end = True
+                continue
+            if line[:1] in {" ", "+", "-"}:
+                if current_hunk is None:
+                    current_hunk = PatchHunk()
+                current_hunk.lines.append(line)
+
+        if current_hunk and current_hunk.lines:
+            hunks.append(current_hunk)
+
+        if not hunks:
+            change_info["error"] = "Unified diff contained no hunks"
+            return content, change_info
+
         try:
-            # Apply the patch (simplified version)
-            # In production, you'd want to use a proper patch library
-            change_info["message"] = "Unified diff patching requires additional implementation"
-            change_info["success"] = False
-        except Exception as e:
-            change_info["error"] = str(e)
-        
-        return content, change_info
+            updated = ApplyPatchExecutor._apply_update_hunks(content, hunks)
+        except Exception as exc:
+            change_info["error"] = str(exc)
+            return content, change_info
+
+        change_info["success"] = True
+        change_info["hunks"] = len(hunks)
+        return updated, change_info
+
+
+@dataclass
+class PatchHunk:
+    lines: List[str] = field(default_factory=list)
+    no_newline_at_end: bool = False
+
+
+@dataclass
+class PatchOperation:
+    kind: str
+    path: str
+    hunks: List[PatchHunk] = field(default_factory=list)
+    move_to: Optional[str] = None
+
+
+class ApplyPatchParser:
+    """Parse a Codex-style apply_patch payload."""
+
+    BEGIN_MARKER = "*** Begin Patch"
+    END_MARKER = "*** End Patch"
+    ADD_FILE = "*** Add File: "
+    DELETE_FILE = "*** Delete File: "
+    UPDATE_FILE = "*** Update File: "
+    MOVE_TO = "*** Move to: "
+    END_OF_FILE = "*** End of File"
+
+    @classmethod
+    def parse(cls, patch_text: str) -> List[PatchOperation]:
+        lines = patch_text.splitlines()
+        if not lines or lines[0] != cls.BEGIN_MARKER:
+            raise ValueError("Patch must start with '*** Begin Patch'")
+        if len(lines) < 2 or lines[-1] != cls.END_MARKER:
+            raise ValueError("Patch must end with '*** End Patch'")
+
+        operations: List[PatchOperation] = []
+        index = 1
+
+        while index < len(lines) - 1:
+            line = lines[index]
+            if line.startswith(cls.ADD_FILE):
+                path = line[len(cls.ADD_FILE) :]
+                index += 1
+                hunk = PatchHunk()
+                while index < len(lines) - 1 and not lines[index].startswith(
+                    ("*** Add File: ", "*** Delete File: ", "*** Update File: ")
+                ):
+                    if lines[index] == cls.END_OF_FILE:
+                        hunk.no_newline_at_end = True
+                        index += 1
+                        continue
+                    if not lines[index].startswith("+"):
+                        raise ValueError(f"Add File lines must start with '+': {lines[index]}")
+                    hunk.lines.append(lines[index][1:])
+                    index += 1
+                operations.append(
+                    PatchOperation(kind="add", path=path, hunks=[hunk])
+                )
+                continue
+
+            if line.startswith(cls.DELETE_FILE):
+                path = line[len(cls.DELETE_FILE) :]
+                operations.append(PatchOperation(kind="delete", path=path))
+                index += 1
+                continue
+
+            if line.startswith(cls.UPDATE_FILE):
+                path = line[len(cls.UPDATE_FILE) :]
+                index += 1
+                operation = PatchOperation(kind="update", path=path)
+
+                if index < len(lines) - 1 and lines[index].startswith(cls.MOVE_TO):
+                    operation.move_to = lines[index][len(cls.MOVE_TO) :]
+                    index += 1
+
+                current_hunk: Optional[PatchHunk] = None
+                while index < len(lines) - 1:
+                    current_line = lines[index]
+                    if current_line.startswith(("*** Add File: ", "*** Delete File: ", "*** Update File: ")):
+                        break
+                    if current_line == cls.END_OF_FILE:
+                        if current_hunk is None:
+                            current_hunk = PatchHunk()
+                        current_hunk.no_newline_at_end = True
+                        index += 1
+                        continue
+                    if current_line.startswith("@@"):
+                        if current_hunk and current_hunk.lines:
+                            operation.hunks.append(current_hunk)
+                        current_hunk = PatchHunk()
+                        index += 1
+                        continue
+                    if current_line[:1] in {" ", "+", "-"}:
+                        if current_hunk is None:
+                            current_hunk = PatchHunk()
+                        current_hunk.lines.append(current_line)
+                        index += 1
+                        continue
+                    raise ValueError(f"Unexpected patch line: {current_line}")
+
+                if current_hunk and current_hunk.lines:
+                    operation.hunks.append(current_hunk)
+
+                if not operation.hunks and not operation.move_to:
+                    raise ValueError(f"Update File has no hunks: {path}")
+
+                operations.append(operation)
+                continue
+
+            raise ValueError(f"Unknown patch operation: {line}")
+
+        return operations
+
+
+class ApplyPatchExecutor:
+    """Execute a parsed apply_patch payload against the current file backend."""
+
+    @staticmethod
+    def _match_at(lines: List[str], start: int, needle: List[str]) -> bool:
+        if start < 0 or start + len(needle) > len(lines):
+            return False
+        return lines[start : start + len(needle)] == needle
+
+    @classmethod
+    def _find_chunk_start(
+        cls, lines: List[str], needle: List[str], start_index: int
+    ) -> int:
+        if not needle:
+            return start_index
+        for index in range(start_index, len(lines) - len(needle) + 1):
+            if cls._match_at(lines, index, needle):
+                return index
+        raise ValueError("Failed to locate patch context in target file")
+
+    @classmethod
+    def _apply_update_hunks(cls, original_content: str, hunks: List[PatchHunk]) -> str:
+        original_lines = original_content.splitlines()
+        original_had_newline = original_content.endswith("\n")
+        result_lines: List[str] = []
+        cursor = 0
+
+        for hunk in hunks:
+            old_chunk = [line[1:] for line in hunk.lines if line[:1] in {" ", "-"}]
+            new_chunk = [line[1:] for line in hunk.lines if line[:1] in {" ", "+"}]
+
+            chunk_start = cls._find_chunk_start(original_lines, old_chunk, cursor)
+            result_lines.extend(original_lines[cursor:chunk_start])
+            result_lines.extend(new_chunk)
+            cursor = chunk_start + len(old_chunk)
+
+        result_lines.extend(original_lines[cursor:])
+
+        new_content = "\n".join(result_lines)
+        final_hunk_has_no_newline = bool(hunks and hunks[-1].no_newline_at_end)
+        if result_lines and original_had_newline and not final_hunk_has_no_newline:
+            new_content += "\n"
+        return new_content
+
+
+async def apply_patch(
+    patch: str,
+    backup: bool = True,
+    dry_run: bool = False,
+    create_dirs: bool = False,
+) -> Dict[str, Any]:
+    """
+    Apply a Codex-style multi-file patch.
+
+    The patch format matches the common `*** Begin Patch` / `*** End Patch`
+    envelope with `Add File`, `Delete File`, and `Update File` operations.
+    """
+    operations = ApplyPatchParser.parse(patch)
+    changes: List[Dict[str, Any]] = []
+    adds = updates = deletes = moves = 0
+
+    for operation in operations:
+        target_path = utils.resolve_path(operation.path)
+        if utils.CONNECTION_TYPE == "local" and not utils.is_safe_path(target_path):
+            raise ValueError(f"Invalid path: directory traversal detected: {operation.path}")
+
+        if operation.kind == "add":
+            if await utils.FILE_OPS.exists(target_path):
+                raise ValueError(f"Cannot add file that already exists: {operation.path}")
+            if create_dirs:
+                await utils.FILE_OPS.makedirs(target_path.parent, exist_ok=True)
+            elif not await utils.FILE_OPS.exists(target_path.parent):
+                raise ValueError(f"Parent directory does not exist: {target_path.parent}")
+
+            content = "\n".join(operation.hunks[0].lines)
+            if content and not operation.hunks[0].no_newline_at_end:
+                content += "\n"
+
+            if not dry_run:
+                await utils.FILE_OPS.write_file(target_path, content, encoding="utf-8")
+
+            adds += 1
+            changes.append({"type": "add", "path": str(target_path), "success": True})
+            continue
+
+        if operation.kind == "delete":
+            if not await utils.FILE_OPS.exists(target_path):
+                raise ValueError(f"Cannot delete missing file: {operation.path}")
+            if await utils.FILE_OPS.is_dir(target_path):
+                raise ValueError(f"apply_patch only deletes files, not directories: {operation.path}")
+            backup_path = None
+            if backup and not dry_run:
+                original_content = await utils.FILE_OPS.read_file(target_path, encoding="utf-8")
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_path = target_path.parent / f"{target_path.name}.backup_{timestamp}"
+                await utils.FILE_OPS.write_file(backup_path, original_content, encoding="utf-8")
+            if not dry_run:
+                await utils.FILE_OPS.remove(target_path)
+            deletes += 1
+            change: Dict[str, Any] = {"type": "delete", "path": str(target_path), "success": True}
+            if backup_path is not None:
+                change["backup_path"] = str(backup_path)
+            changes.append(change)
+            continue
+
+        if operation.kind != "update":
+            raise ValueError(f"Unsupported apply_patch operation: {operation.kind}")
+
+        if not await utils.FILE_OPS.exists(target_path):
+            raise ValueError(f"Cannot update missing file: {operation.path}")
+
+        original_content = await utils.FILE_OPS.read_file(target_path, encoding="utf-8")
+        updated_content = (
+            ApplyPatchExecutor._apply_update_hunks(original_content, operation.hunks)
+            if operation.hunks
+            else original_content
+        )
+
+        backup_path = None
+        if backup and not dry_run:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = target_path.parent / f"{target_path.name}.backup_{timestamp}"
+            await utils.FILE_OPS.write_file(backup_path, original_content, encoding="utf-8")
+
+        write_path = target_path
+        if operation.move_to:
+            write_path = utils.resolve_path(operation.move_to)
+            if utils.CONNECTION_TYPE == "local" and not utils.is_safe_path(write_path):
+                raise ValueError(f"Invalid path: directory traversal detected: {operation.move_to}")
+            if await utils.FILE_OPS.exists(write_path) and write_path != target_path:
+                raise ValueError(f"Destination already exists: {operation.move_to}")
+            if create_dirs:
+                await utils.FILE_OPS.makedirs(write_path.parent, exist_ok=True)
+            elif not await utils.FILE_OPS.exists(write_path.parent):
+                raise ValueError(f"Parent directory does not exist: {write_path.parent}")
+
+        if not dry_run:
+            await utils.FILE_OPS.write_file(write_path, updated_content, encoding="utf-8")
+            if operation.move_to and write_path != target_path:
+                await utils.FILE_OPS.remove(target_path)
+
+        updates += 1
+        change: Dict[str, Any] = {
+            "type": "update",
+            "path": str(target_path),
+            "success": True,
+        }
+        if backup_path is not None:
+            change["backup_path"] = str(backup_path)
+        if operation.move_to:
+            change["moved_to"] = str(write_path)
+            moves += 1
+        changes.append(change)
+
+    return {
+        "success": True,
+        "operations_applied": len(changes),
+        "adds": adds,
+        "updates": updates,
+        "deletes": deletes,
+        "moves": moves,
+        "changes": changes,
+        "dry_run": dry_run,
+    }
 
 
 # Tool functions that will be registered with FastMCP

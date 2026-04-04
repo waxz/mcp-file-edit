@@ -42,6 +42,12 @@ if "asyncssh" not in sys.modules:
     asyncssh_stub.connect = None
     sys.modules["asyncssh"] = asyncssh_stub
 
+if "toml" not in sys.modules:
+    toml_stub = types.ModuleType("toml")
+    toml_stub.load = lambda *args, **kwargs: {}
+    toml_stub.loads = lambda *args, **kwargs: {}
+    sys.modules["toml"] = toml_stub
+
 if "fastmcp" not in sys.modules:
     fastmcp_stub = types.ModuleType("fastmcp")
 
@@ -49,17 +55,95 @@ if "fastmcp" not in sys.modules:
         def __init__(self, name):
             self.name = name
 
-        def tool(self):
+        def tool(self, *args, **kwargs):
+            if args and callable(args[0]) and len(args) == 1 and not kwargs:
+                fn = args[0]
+                setattr(self, fn.__name__, fn)
+                return fn
+
             def _decorator(fn):
+                setattr(self, fn.__name__, fn)
                 return fn
 
             return _decorator
 
+        def add_middleware(self, middleware):
+            return None
+
         def run(self, *args, **kwargs):
             return None
 
+    class _Context:
+        pass
+
     fastmcp_stub.FastMCP = _FastMCP
+    fastmcp_stub.Context = _Context
     sys.modules["fastmcp"] = fastmcp_stub
+
+if "fastmcp.server.tasks" not in sys.modules:
+    tasks_stub = types.ModuleType("fastmcp.server.tasks")
+
+    class _TaskConfig:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    tasks_stub.TaskConfig = _TaskConfig
+    sys.modules["fastmcp.server.tasks"] = tasks_stub
+
+if "fastmcp.server.middleware" not in sys.modules:
+    middleware_stub = types.ModuleType("fastmcp.server.middleware")
+
+    class _Middleware:
+        pass
+
+    class _MiddlewareContext:
+        def __init__(self, message=None):
+            self.message = message
+
+    middleware_stub.Middleware = _Middleware
+    middleware_stub.MiddlewareContext = _MiddlewareContext
+    sys.modules["fastmcp.server.middleware"] = middleware_stub
+
+if "fastmcp.server.dependencies" not in sys.modules:
+    dependencies_stub = types.ModuleType("fastmcp.server.dependencies")
+    dependencies_stub.get_http_headers = lambda: {}
+    sys.modules["fastmcp.server.dependencies"] = dependencies_stub
+
+if "fastmcp.exceptions" not in sys.modules:
+    exceptions_stub = types.ModuleType("fastmcp.exceptions")
+
+    class _ToolError(Exception):
+        pass
+
+    exceptions_stub.ToolError = _ToolError
+    sys.modules["fastmcp.exceptions"] = exceptions_stub
+
+if "mcp" not in sys.modules:
+    sys.modules["mcp"] = types.ModuleType("mcp")
+
+if "mcp.types" not in sys.modules:
+    mcp_types_stub = types.ModuleType("mcp.types")
+
+    class _TextContent:
+        def __init__(self, type="text", text=""):
+            self.type = type
+            self.text = text
+
+    mcp_types_stub.TextContent = _TextContent
+    sys.modules["mcp.types"] = mcp_types_stub
+
+if "mcp.server" not in sys.modules:
+    sys.modules["mcp.server"] = types.ModuleType("mcp.server")
+
+if "mcp.server.session" not in sys.modules:
+    session_stub = types.ModuleType("mcp.server.session")
+
+    class _ServerSession:
+        async def _send_response(self, request_id, response):
+            return None
+
+    session_stub.ServerSession = _ServerSession
+    sys.modules["mcp.server.session"] = session_stub
 
 from mcp_file_edit import utils
 from mcp_file_edit import config as app_config
@@ -187,9 +271,25 @@ def _import_server_for_tests():
     analyzer_stub.search_functions = _noop
     sys.modules["mcp_file_edit.code_analyzer"] = analyzer_stub
 
-    if "mcp_file_edit.server" in sys.modules:
-        return importlib.reload(sys.modules["mcp_file_edit.server"])
-    return importlib.import_module("mcp_file_edit.server")
+    lint_stub = types.ModuleType("mcp_file_edit.linting_tools")
+    lint_stub.detect_linters = _noop
+    lint_stub.run_linter = _noop
+    lint_stub.lint_file = _noop
+    lint_stub.run_type_checker = _noop
+    lint_stub.type_check_file = _noop
+    lint_stub.format_file = _noop
+    sys.modules["mcp_file_edit.linting_tools"] = lint_stub
+
+    config_module = importlib.import_module("mcp_file_edit.config")
+    args = config_module.parse_args()
+    config_module.SETTINGS = config_module.Settings.from_runtime(args)
+
+    tool_handlers = importlib.import_module("mcp_file_edit.tool_handlers")
+    from fastmcp import FastMCP
+
+    app = FastMCP("test-server")
+    tool_handlers.register_tools(app)
+    return app
 
 
 def test_file_tools_uses_live_utils_state():
@@ -259,6 +359,234 @@ def test_ssh_manager_properties_expose_connection_params():
     assert manager.key_filename == "/tmp/id_rsa"
 
 
+def test_apply_patch_updates_file_with_context_hunks():
+    state = _StateGuard()
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = root / "sample.py"
+            target.write_text("def old_name():\n    return 1\n", encoding="utf-8")
+
+            utils.FILE_OPS = utils.LocalFileOperations()
+            utils.CONNECTION_TYPE = "local"
+            utils.PROJECT_DIR = root
+
+            result = _run(
+                file_tools.apply_patch(
+                    "\n".join(
+                        [
+                            "*** Begin Patch",
+                            "*** Update File: sample.py",
+                            "@@",
+                            "-def old_name():",
+                            "-    return 1",
+                            "+def new_name():",
+                            "+    return 2",
+                            "*** End Patch",
+                        ]
+                    )
+                )
+            )
+
+            assert result["success"] is True
+            assert target.read_text(encoding="utf-8") == "def new_name():\n    return 2\n"
+    finally:
+        state.restore()
+
+
+def test_apply_patch_adds_and_deletes_files():
+    state = _StateGuard()
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            existing = root / "obsolete.txt"
+            existing.write_text("remove me\n", encoding="utf-8")
+
+            utils.FILE_OPS = utils.LocalFileOperations()
+            utils.CONNECTION_TYPE = "local"
+            utils.PROJECT_DIR = root
+
+            patch = "\n".join(
+                [
+                    "*** Begin Patch",
+                    "*** Add File: created.txt",
+                    "+hello",
+                    "+world",
+                    "*** Delete File: obsolete.txt",
+                    "*** End Patch",
+                ]
+            )
+
+            result = _run(file_tools.apply_patch(patch))
+
+            assert result["success"] is True
+            assert (root / "created.txt").read_text(encoding="utf-8") == "hello\nworld\n"
+            assert existing.exists() is False
+    finally:
+        state.restore()
+
+
+def test_apply_patch_moves_file_when_move_to_is_present():
+    state = _StateGuard()
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "before.txt"
+            source.write_text("old line\n", encoding="utf-8")
+
+            utils.FILE_OPS = utils.LocalFileOperations()
+            utils.CONNECTION_TYPE = "local"
+            utils.PROJECT_DIR = root
+
+            patch = "\n".join(
+                [
+                    "*** Begin Patch",
+                    "*** Update File: before.txt",
+                    "*** Move to: after.txt",
+                    "@@",
+                    "-old line",
+                    "+new line",
+                    "*** End Patch",
+                ]
+            )
+
+            result = _run(file_tools.apply_patch(patch))
+
+            assert result["success"] is True
+            assert source.exists() is False
+            assert (root / "after.txt").read_text(encoding="utf-8") == "new line\n"
+    finally:
+        state.restore()
+
+
+def test_apply_patch_move_only_preserves_file_content():
+    state = _StateGuard()
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "from.txt"
+            source.write_text("keep this\n", encoding="utf-8")
+
+            utils.FILE_OPS = utils.LocalFileOperations()
+            utils.CONNECTION_TYPE = "local"
+            utils.PROJECT_DIR = root
+
+            patch = "\n".join(
+                [
+                    "*** Begin Patch",
+                    "*** Update File: from.txt",
+                    "*** Move to: to.txt",
+                    "*** End Patch",
+                ]
+            )
+
+            result = _run(file_tools.apply_patch(patch))
+
+            assert result["success"] is True
+            assert result["moves"] == 1
+            assert source.exists() is False
+            assert (root / "to.txt").read_text(encoding="utf-8") == "keep this\n"
+    finally:
+        state.restore()
+
+
+def test_apply_patch_honors_end_of_file_marker():
+    state = _StateGuard()
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            utils.FILE_OPS = utils.LocalFileOperations()
+            utils.CONNECTION_TYPE = "local"
+            utils.PROJECT_DIR = root
+
+            patch = "\n".join(
+                [
+                    "*** Begin Patch",
+                    "*** Add File: nonewline.txt",
+                    "+no trailing newline",
+                    "*** End of File",
+                    "*** End Patch",
+                ]
+            )
+
+            result = _run(file_tools.apply_patch(patch))
+
+            assert result["success"] is True
+            assert (root / "nonewline.txt").read_text(encoding="utf-8") == "no trailing newline"
+    finally:
+        state.restore()
+
+
+def test_apply_patch_dry_run_does_not_modify_files():
+    state = _StateGuard()
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = root / "sample.txt"
+            target.write_text("before\n", encoding="utf-8")
+
+            utils.FILE_OPS = utils.LocalFileOperations()
+            utils.CONNECTION_TYPE = "local"
+            utils.PROJECT_DIR = root
+
+            patch = "\n".join(
+                [
+                    "*** Begin Patch",
+                    "*** Update File: sample.txt",
+                    "@@",
+                    "-before",
+                    "+after",
+                    "*** End Patch",
+                ]
+            )
+
+            result = _run(file_tools.apply_patch(patch, dry_run=True))
+
+            assert result["success"] is True
+            assert target.read_text(encoding="utf-8") == "before\n"
+    finally:
+        state.restore()
+
+
+def test_patch_file_unified_diff_uses_shared_hunk_logic():
+    state = _StateGuard()
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = root / "u.txt"
+            target.write_text("alpha\nbeta\n", encoding="utf-8")
+
+            utils.FILE_OPS = utils.LocalFileOperations()
+            utils.CONNECTION_TYPE = "local"
+            utils.PROJECT_DIR = root
+
+            result = _run(
+                file_tools.patch_file(
+                    "u.txt",
+                    patches=[
+                        {
+                            "unified_diff": "\n".join(
+                                [
+                                    "--- a/u.txt",
+                                    "+++ b/u.txt",
+                                    "@@",
+                                    "-alpha",
+                                    "+ALPHA",
+                                    " beta",
+                                ]
+                            )
+                        }
+                    ],
+                )
+            )
+
+            assert result["success"] is True
+            assert target.read_text(encoding="utf-8") == "ALPHA\nbeta\n"
+    finally:
+        state.restore()
+
+
 def test_ssh_git_command_quotes_arguments_and_cwd():
     conn = FakeConn()
     ops = SSHGitOperations(conn, object())
@@ -321,11 +649,14 @@ def test_path_protection_blocks_absolute_path_outside_project():
 
 def test_set_project_directory_respects_allow_directories_allow_case(monkeypatch):
     with tempfile.TemporaryDirectory() as tmpdir:
-        allowed_root = Path(tmpdir) / "allowed"
+        base = Path(tmpdir)
+        allowed_root = base / "allowed"
         project_dir = allowed_root / "project"
         project_dir.mkdir(parents=True)
 
-        monkeypatch.setattr(sys, "argv", ["server.py", "--allow-directories", str(allowed_root)])
+        monkeypatch.setattr(
+            sys, "argv", ["server.py", "--workdir", str(base), "--directories", str(allowed_root)]
+        )
 
         server = _import_server_for_tests()
 
@@ -343,7 +674,9 @@ def test_set_project_directory_respects_allow_directories_block_case(monkeypatch
         allowed_root.mkdir(parents=True)
         blocked_root.mkdir(parents=True)
 
-        monkeypatch.setattr(sys, "argv", ["server.py", "--allow-directories", str(allowed_root)])
+        monkeypatch.setattr(
+            sys, "argv", ["server.py", "--workdir", str(base), "--directories", str(allowed_root)]
+        )
 
         server = _import_server_for_tests()
 
@@ -352,7 +685,9 @@ def test_set_project_directory_respects_allow_directories_block_case(monkeypatch
 
 
 def test_cli_allow_directories_overrides_runtime_config(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["server.py", "--allow-directories", "/tmp/a:/tmp/b"])
+    monkeypatch.setattr(
+        sys, "argv", ["server.py", "--workdir", "/tmp", "--directories", "/tmp/a", "/tmp/b"]
+    )
 
     _import_server_for_tests()
     roots = utils.get_allow_directories()
@@ -362,8 +697,12 @@ def test_cli_allow_directories_overrides_runtime_config(monkeypatch):
 
 
 def test_get_allow_directories_linux_style_separator(monkeypatch):
-    monkeypatch.setattr(app_config.os, "pathsep", ":")
-    app_config.configure_runtime(allow_directories_raw="/tmp/a:/tmp/b")
+    settings = app_config.Settings(
+        PLATFORM="linux",
+        WORK_DIR="/tmp",
+        ALLOWED_DIRECTORIES=["/tmp/a", "/tmp/b"],
+    )
+    app_config.SETTINGS = settings
 
     roots = utils.get_allow_directories()
 
@@ -373,8 +712,12 @@ def test_get_allow_directories_linux_style_separator(monkeypatch):
 
 
 def test_get_allow_directories_windows_style_separator(monkeypatch):
-    monkeypatch.setattr(app_config.os, "pathsep", ";")
-    app_config.configure_runtime(allow_directories_raw="/tmp/a;/tmp/b")
+    settings = app_config.Settings(
+        PLATFORM="linux",
+        WORK_DIR="/tmp",
+        ALLOWED_DIRECTORIES=["/tmp/a", "/tmp/b"],
+    )
+    app_config.SETTINGS = settings
 
     roots = utils.get_allow_directories()
 

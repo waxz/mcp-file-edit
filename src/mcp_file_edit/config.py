@@ -157,6 +157,8 @@ class Settings(BaseSettings):
             if config_os.get("allow_directories") is not None
             else config_os.get("allow_direcotories")
         )
+        if merged["ALLOWED_DIRECTORIES"] is None:
+            merged["ALLOWED_DIRECTORIES"] = []
         if getattr(args, "transport", None):
             merged["TRANSPORT"] = args.transport
         if getattr(args, "host", None):

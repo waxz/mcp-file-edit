@@ -1,0 +1,23 @@
+## Scope
+  Use the connected `mcp-file-edit` server for file operations in this project.
+
+  ## Core Rules
+  - Use `apply_patch` for edits to existing files unless a full rewrite is clearly required.
+  - Use `create_file` only for new files.
+  - Use `write_file` only for intentional full-file replacement.
+  - Keep changes minimal and focused.
+  - Use `search_files`, `list_files`, and `read_file` only as needed to gather context.
+  - Run the smallest useful verification step after changes when possible.
+  - If verification cannot be run, state that explicitly.
+
+  ## Editing Standard
+  - Prefer anchored patches over whole-file rewrites.
+  - Do not make unrelated edits during a focused change.
+  - Read additional context before patching if the target is ambiguous.
+
+  ## Workflow
+  1. Discover relevant code.
+  2. Read minimal context.
+  3. Apply the change.
+  4. Verify with targeted checks.
+  5. Fix follow-up issues immediately if verification fails.

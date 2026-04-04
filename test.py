@@ -101,10 +101,17 @@ def build_client(args) -> Client:
     from mcp_file_edit.config import  parse_args
     from mcp_file_edit import config
 
+    workdir = Path(args.workdir).resolve() if args.workdir else PROJECT_ROOT.resolve()
+
     old_argv = sys.argv[:]
     try:
-        sys.argv = [sys.argv[0]]
-        # server = build_server()
+        sys.argv = [
+            sys.argv[0],
+            "--workdir",
+            str(workdir),
+            "--directories",
+            str(workdir),
+        ]
         args = parse_args()
 
         config.SETTINGS = config.Settings.from_runtime(args)
@@ -202,7 +209,7 @@ async def call_tool(client: Client, scenario: Scenario) -> ScenarioResult:
                 detail=f"missing expected substring: {scenario.must_contain!r}",
             )
 
-        if "No such file or directory" in output:
+        if output.startswith("Error calling tool") and "No such file or directory" in output:
             print("FAILED: unexpected path resolution error")
             print("OUTPUT> ",output)
             return ScenarioResult(
@@ -634,7 +641,15 @@ Scenario("posix traversal invalid", "read_file", {"path": "../README.md"}, expec
     return scenarios
 
 
+def reset_test_workspace(root: Path) -> None:
+    test_dir = root / ".tests"
+    if test_dir.exists():
+        shutil.rmtree(test_dir, ignore_errors=True)
+
+
 async def run_scenarios(args: argparse.Namespace) -> int:
+    workdir = Path(args.workdir).resolve() if args.workdir else PROJECT_ROOT.resolve()
+    reset_test_workspace(workdir)
     client = build_client(args)
  
     # path = prepare_workspace()

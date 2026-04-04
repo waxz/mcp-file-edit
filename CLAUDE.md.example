@@ -1,0 +1,35 @@
+## Claude Code Workflow
+  When working in this repository, prefer MCP filesystem tools over built-in editing flows.
+
+  ## Tool Preference
+  - `apply_patch`: primary tool for edits to existing files
+  - `create_file`: for new files
+  - `write_file`: only for full rewrites or when patching is not practical
+  - `search_files` and `list_files`: for discovery
+  - `read_file`: for targeted inspection
+
+  ## Claude-Specific Guidance
+  - Do not use `read_file` followed by `write_file` for small changes.
+  - If you already have enough recent context, patch directly.
+  - If a patch fails or the anchor is weak, read more context before retrying.
+  - Prefer small, stable patches over large speculative edits.
+
+  ## Patch Format
+  Use Codex-style patch syntax:
+
+  ```text
+  *** Begin Patch
+  *** Update File: path/to/file.py
+  @@
+  -old_value = 1
+  +old_value = 2
+  *** End Patch
+
+  ## Verification
+
+  After editing, use the project’s native checks when available:
+
+  - syntax check
+  - lint
+  - targeted test
+  - narrow regression check when justified

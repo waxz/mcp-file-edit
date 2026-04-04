@@ -42,6 +42,7 @@ from .file_tools import (
     search_files as search_files_,
     replace_in_files as replace_in_files_,
     patch_file as patch_file_,
+    apply_patch as apply_patch_,
     get_file_info as get_file_info_,
     create_directory as create_directory_,
     remove_directory as remove_directory_,
@@ -123,7 +124,7 @@ def register_tools(server: FastMCP) -> None:
         start_line: Optional[int] = None,
         end_line: Optional[int] = None,
     ) -> Any:
-        """Read a file. Returns text or base64 content depending on file type; raises ValueError for invalid or missing targets."""
+        """Read a file for inspection. Prefer `apply_patch` for targeted edits instead of read/modify/write cycles."""
         return await read_file_(path, encoding, start_line, end_line)
 
 
@@ -131,7 +132,7 @@ def register_tools(server: FastMCP) -> None:
     async def write_file(
         path: str, content: str, encoding: str = "utf-8", create_dirs: bool = False
     ) -> Any:
-        """Write content to a file. Returns path and size; raises ValueError for invalid paths or write errors."""
+        """Write full file contents. Prefer `apply_patch` for partial edits; use this for new files or full rewrites."""
         return await write_file_(path, content, encoding, create_dirs)
 
     @server.tool
@@ -213,8 +214,19 @@ def register_tools(server: FastMCP) -> None:
         dry_run: bool = False,
         create_dirs: bool = False,
     ) -> Any:
-        """Apply targeted patches to one file. Returns per-patch results and final status."""
+        """Apply targeted patches to one file. For agent-driven code edits, prefer `apply_patch` when possible."""
         return await patch_file_(path, patches, backup, dry_run, create_dirs)
+
+
+    @server.tool
+    async def apply_patch(
+        patch: str,
+        backup: bool = True,
+        dry_run: bool = False,
+        create_dirs: bool = False,
+    ) -> Any:
+        """Preferred tool for code edits. Apply robust multi-file patches using Codex-style `*** Begin Patch` syntax."""
+        return await apply_patch_(patch, backup, dry_run, create_dirs)
 
 
     @server.tool

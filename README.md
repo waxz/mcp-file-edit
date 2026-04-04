@@ -9,7 +9,7 @@ A Model Context Protocol (MCP) server for comprehensive file system operations w
 | **File Operations** | Read, write, create, delete, move, copy files |
 | **Directory Management** | List files, create directories, recursive operations |
 | **Search & Replace** | Regex search across files, multi-file find/replace |
-| **Patching** | Line-based, pattern-based, and context-based modifications |
+| **Patching** | Line-based, pattern-based, context-based, and Codex-style `apply_patch` modifications |
 | **Code Analysis** | Extract functions, classes, and code structure |
 | **SSH Support** | Remote file operations, upload/download, rsync sync |
 | **Git Operations** | Full git support for local and remote repositories |
@@ -47,22 +47,30 @@ API_KEYS = "sk_qqqq"
 mcp-file-edit -t http -P 8000 -H 0.0.0.0 -p /fs
 ```
 
-### Claude Desktop Configuration
+### Claude Code
+```bash
+claude mcp add --transport http filesystem  http://localhost:8001/fs --header "x-api-key:sk-123456"
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+claude config set permissions.deny "['Edit', 'Write']"
 
-```json
-{
-  "mcpServers": {
-    "file-edit": {
-      "command": "uv",
-      "args": ["run", "mcp", "run", "/path/to/mcp-file-edit/server.py"]
-    }
-  }
-}
 ```
 
+
 Restart Claude Desktop after configuration.
+
+### Claude Code Guidance
+
+When Claude Code uses this MCP server, prefer tools in this order:
+
+1. `apply_patch` for targeted edits to existing files
+2. `create_file` for new files
+3. `write_file` only for full rewrites when patching is unnecessary
+
+Avoid the brittle pattern of `read_file` followed by `write_file` for a small change. That loses context, makes anchors weaker, and is more likely to corrupt unrelated content when the model diagnosis is wrong.
+
+Example agent instruction templates are included in:
+- `CLAUDE.md.example`
+- `AGENTS.md.example`
 
 ## Usage
 
@@ -120,6 +128,27 @@ patch_file("main.py", patches=[{"find": "import old", "replace": "import new"}])
 patch_file("app.py", patches=[{"context": ["def process():", "    return None"], "replace": ["def process():", "    return result"]}])
 ```
 
+For code-editing agents, prefer `apply_patch` over `read_file` + `write_file` when making targeted changes:
+
+```text
+*** Begin Patch
+*** Update File: src/example.py
+@@
+-old_value = 1
++old_value = 2
+*** End Patch
+```
+
+Use `write_file` only when one of these is true:
+- the file is brand new
+- the entire file content is being replaced intentionally
+- patch context cannot be expressed cleanly
+
+For a normal code fix, the guidance should be:
+- inspect with `read_file`
+- modify with `apply_patch`
+- avoid whole-file rewrites unless necessary
+
 ### Code Analysis
 
 ```python
@@ -162,6 +191,7 @@ diff = git_diff()
 - `search_files` - Search for patterns with regex support
 - `replace_in_files` - Find and replace across multiple files
 - `patch_file` - Apply precise modifications to files
+- `apply_patch` - Apply robust multi-file patches using Codex-style patch envelopes
 
 ### Project Management
 - `set_project_directory` - Set working directory (local or SSH)
@@ -190,6 +220,18 @@ diff = git_diff()
 - **Backup Creation**: Automatic backups before modifications
 - **Dry Run Mode**: Preview changes before applying
 - **Atomic Operations**: All-or-nothing patch applications
+- **Agent-Friendly Editing**: `apply_patch` avoids brittle whole-file rewrite flows for small edits
+
+## Recommended Agent Workflow
+
+For Claude Code and similar agents:
+
+```text
+1. Use list_files/search_files/read_file to gather context.
+2. Use apply_patch for edits to existing files.
+3. Use create_file for new files.
+4. Use write_file only for intentional full-file replacement.
+```
 
 ## Configuration Options
 
