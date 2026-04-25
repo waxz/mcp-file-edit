@@ -66,6 +66,26 @@ def _normalize_directory_list(value: list[str] | None) -> list[str]:
     return result
 
 
+def _normalize_runtime_directories(
+    work_dir: str,
+    platform_name: str,
+    configured_directories: list[str],
+) -> list[str]:
+    """Normalize allowed roots independently from PROJECT_DIR state."""
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    roots = configured_directories or ["."]
+    for item in roots:
+        resolved = get_platform_path(item, platform_name, work_dir)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        normalized.append(resolved)
+
+    return normalized
+
+
 class Settings(BaseSettings):
     """Application runtime settings."""
 
@@ -77,6 +97,7 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     PATH: str = "/mcp"
+    PUBLIC_URL: str|None = None
     PLATFORM: str = "linux"
     IS_IN_DOCKER : bool = False
     IS_TMUX_INSTALLED: bool = check_installed("tmux")
@@ -97,27 +118,20 @@ class Settings(BaseSettings):
         if self.TRANSPORT == "http" and not self.PATH:
             raise ValueError("PATH is required when TRANSPORT is 'http'")
 
-        # print(f"origin WORK_DIR:{self.WORK_DIR}")
-        # print(f"origin ALLOWED_DIRECTORIES:{self.ALLOWED_DIRECTORIES}")
-
         self.WORK_DIR = get_platform_path(".", self.PLATFORM, self.WORK_DIR)
-        utils.PROJECT_DIR = Path(self.WORK_DIR)
         utils.BASE_DIR = Path(self.WORK_DIR)
+        self.ALLOWED_DIRECTORIES = _normalize_runtime_directories(
+            self.WORK_DIR,
+            self.PLATFORM,
+            self.ALLOWED_DIRECTORIES,
+        )
 
-        ALLOWED_DIRECTORIES = [
-            get_platform_path(f, self.PLATFORM, self.WORK_DIR)
-            for f in self.ALLOWED_DIRECTORIES
-        ]
-        self.ALLOWED_DIRECTORIES = [
-            f 
-            for f in ALLOWED_DIRECTORIES if utils.is_safe_path(Path(f))
-        ]
-
-        # print(f"self.WORK_DIR:{self.WORK_DIR}")
-        # print(f"utils.PROJECT_DIR:{utils.PROJECT_DIR}")
-        # print(f"utils.BASE_DIR:{utils.BASE_DIR}")
-        # print(f"ALLOWED_DIRECTORIES:{ALLOWED_DIRECTORIES}")
-        # print(f"self.ALLOWED_DIRECTORIES:{self.ALLOWED_DIRECTORIES}")
+        allowed_roots = [Path(root).resolve() for root in self.ALLOWED_DIRECTORIES]
+        work_dir_path = Path(self.WORK_DIR).resolve()
+        if utils.is_within_allowed_directories(work_dir_path, allowed_roots):
+            utils.PROJECT_DIR = work_dir_path
+        else:
+            utils.PROJECT_DIR = allowed_roots[0]
         return self
 
     @classmethod
@@ -173,6 +187,8 @@ class Settings(BaseSettings):
 
         if getattr(args, "directories", None):
             merged["ALLOWED_DIRECTORIES"] = list(args.directories)
+        else:
+            merged.setdefault("ALLOWED_DIRECTORIES", [str(Path.cwd().resolve())]) 
 
 
         

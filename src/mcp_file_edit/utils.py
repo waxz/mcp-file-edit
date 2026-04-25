@@ -146,7 +146,8 @@ def get_allow_directories() -> list[Path]:
     Get allowed local root directories for set_project_directory.
 
     Reads runtime config loaded from config.toml / CLI.
-    Defaults to BASE_DIR when unset or empty.
+    When unset, config normalizes this to the active WORK_DIR so the initial
+    PROJECT_DIR is always inside the allowed roots.
     """
     allow_directories = config.SETTINGS.ALLOWED_DIRECTORIES
 
@@ -252,6 +253,9 @@ async def get_file_info_async(path: Path) -> Dict[str, Any]:
     the MCP server is used by clients on different operating systems.
     """
     try:
+        if CONNECTION_TYPE == "local" and not is_safe_path(path):
+            raise ValueError("Invalid path: directory traversal detected")
+
         stat_info = await FILE_OPS.stat(path)
         file_type = get_file_type(path)
         

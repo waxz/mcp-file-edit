@@ -73,6 +73,7 @@ def main() -> None:
             port=config.SETTINGS.PORT,
             host=config.SETTINGS.HOST,
             path=config.SETTINGS.PATH,
+            # stateless_http = False,
         )
         return
 

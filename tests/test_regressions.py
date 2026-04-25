@@ -2,6 +2,7 @@
 """Focused regression tests for state, SSH behavior, and command safety."""
 
 import sys
+import os
 import asyncio
 import tempfile
 import importlib
@@ -118,6 +119,20 @@ if "fastmcp.exceptions" not in sys.modules:
     exceptions_stub.ToolError = _ToolError
     sys.modules["fastmcp.exceptions"] = exceptions_stub
 
+if "fastmcp.tools" not in sys.modules:
+    sys.modules["fastmcp.tools"] = types.ModuleType("fastmcp.tools")
+
+if "fastmcp.tools.base" not in sys.modules:
+    tools_base_stub = types.ModuleType("fastmcp.tools.base")
+
+    class _ToolResult:
+        def __init__(self, content=None, structured_content=None):
+            self.content = content or []
+            self.structured_content = structured_content or {}
+
+    tools_base_stub.ToolResult = _ToolResult
+    sys.modules["fastmcp.tools.base"] = tools_base_stub
+
 if "mcp" not in sys.modules:
     sys.modules["mcp"] = types.ModuleType("mcp")
 
@@ -149,8 +164,14 @@ from mcp_file_edit import utils
 from mcp_file_edit import config as app_config
 from mcp_file_edit import file_tools
 from mcp_file_edit import ssh_tools
+from mcp_file_edit.file_patch_tools import (
+    apply_patch as apply_codex_patch,
+    _build_patch_preview_result,
+    attach_patch_preview_session,
+)
 from mcp_file_edit.file_operations import SSHFileOperations
 from mcp_file_edit.git_operations import SSHGitOperations
+from mcp_file_edit.patch_preview_store import create_patch_preview_session, set_patch_preview_status
 from mcp_file_edit.ssh_manager import SSHConnectionManager
 
 
@@ -159,11 +180,17 @@ class _StateGuard:
         self.file_ops = utils.FILE_OPS
         self.connection_type = utils.CONNECTION_TYPE
         self.project_dir = utils.PROJECT_DIR
+        self.base_dir = utils.BASE_DIR
+        self.git_ops = utils.GIT_OPS
+        self.settings = app_config.SETTINGS
 
     def restore(self):
         utils.FILE_OPS = self.file_ops
         utils.CONNECTION_TYPE = self.connection_type
         utils.PROJECT_DIR = self.project_dir
+        utils.BASE_DIR = self.base_dir
+        utils.GIT_OPS = self.git_ops
+        app_config.SETTINGS = self.settings
 
 
 class FakeListOps:
@@ -230,6 +257,28 @@ class FakeRemoteOps:
         self.last_write = (path, content)
 
 
+class FakePatchOps:
+    def __init__(self, files):
+        self.files = dict(files)
+        self.writes = []
+
+    async def exists(self, path):
+        return str(path) in self.files
+
+    async def read_file(self, path, encoding="utf-8"):
+        return self.files[str(path)]
+
+    async def write_file(self, path, content, encoding="utf-8"):
+        self.files[str(path)] = content
+        self.writes.append((str(path), content))
+
+    async def stat(self, path):
+        return SimpleNamespace(st_size=len(self.files[str(path)]))
+
+    async def remove(self, path):
+        self.files.pop(str(path), None)
+
+
 class FakeConn:
     def __init__(self):
         self.last_command = None
@@ -258,6 +307,113 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+def test_apply_patch_rejects_mismatched_removal_lines():
+    guard = _StateGuard()
+    try:
+        project_dir = Path("/tmp/mcp-file-edit-regression")
+        utils.PROJECT_DIR = project_dir
+        utils.CONNECTION_TYPE = "local"
+        target = project_dir / "demo.txt"
+        utils.FILE_OPS = FakePatchOps({str(target): "hello mcp\n"})
+
+        patch = """*** Begin Patch
+*** Update File: demo.txt
+@@
+-Hello
++Hello world
+*** End Patch"""
+
+        result = _run(
+            apply_codex_patch(
+                patch,
+                backup=False,
+                dry_run=True,
+                create_dirs=False,
+                validate_first=True,
+            )
+        )
+
+        assert result["success"] is False
+        assert result["partial_success"] is False
+        assert result["operations_applied"] == 1
+        assert "Failed to locate patch context exactly" in result["changes"][0]["error"]
+    finally:
+        guard.restore()
+
+
+def test_apply_patch_accepts_whitespace_normalized_hunk_match():
+    guard = _StateGuard()
+    try:
+        project_dir = Path("/tmp/mcp-file-edit-regression")
+        utils.PROJECT_DIR = project_dir
+        utils.CONNECTION_TYPE = "local"
+        target = project_dir / "demo.txt"
+        utils.FILE_OPS = FakePatchOps({str(target): "def demo():\n\treturn 1\n"})
+
+        patch = """*** Begin Patch
+*** Update File: demo.txt
+@@
+-def demo():
+-    return 1
++def demo():
++    return 2
+*** End Patch"""
+
+        result = _run(
+            apply_codex_patch(
+                patch,
+                backup=False,
+                dry_run=False,
+                create_dirs=False,
+                validate_first=True,
+            )
+        )
+
+        assert result["success"] is True
+        assert result["updates"] == 1
+        assert any(
+            "whitespace-normalized context" in warning
+            for warning in result["warnings"]
+        )
+        assert utils.FILE_OPS.files[str(target)] == "def demo():\n    return 2\n"
+    finally:
+        guard.restore()
+
+
+def test_apply_patch_rejects_ambiguous_whitespace_normalized_match():
+    guard = _StateGuard()
+    try:
+        project_dir = Path("/tmp/mcp-file-edit-regression")
+        utils.PROJECT_DIR = project_dir
+        utils.CONNECTION_TYPE = "local"
+        target = project_dir / "demo.txt"
+        utils.FILE_OPS = FakePatchOps(
+            {str(target): "value  = 1\n\nvalue\t=\t1\n"}
+        )
+
+        patch = """*** Begin Patch
+*** Update File: demo.txt
+@@
+-value = 1
++value = 2
+*** End Patch"""
+
+        result = _run(
+            apply_codex_patch(
+                patch,
+                backup=False,
+                dry_run=True,
+                create_dirs=False,
+                validate_first=True,
+            )
+        )
+
+        assert result["success"] is False
+        assert "ambiguous" in result["changes"][0]["error"]
+    finally:
+        guard.restore()
+
+
 def _import_server_for_tests():
     # Isolate set_project_directory tests from unrelated import issues in code_analyzer.
     analyzer_stub = types.ModuleType("mcp_file_edit.code_analyzer")
@@ -281,7 +437,14 @@ def _import_server_for_tests():
     sys.modules["mcp_file_edit.linting_tools"] = lint_stub
 
     config_module = importlib.import_module("mcp_file_edit.config")
-    args = config_module.parse_args()
+    cli_flags = {"-d", "--directories", "-t", "--transport", "-H", "--host", "-P", "--port", "-p", "--path", "-w", "--workdir", "-c", "--config"}
+    old_argv = sys.argv[:]
+    try:
+        if not any(arg in cli_flags for arg in sys.argv[1:]):
+            sys.argv = [sys.argv[0]]
+        args = config_module.parse_args()
+    finally:
+        sys.argv = old_argv
     config_module.SETTINGS = config_module.Settings.from_runtime(args)
 
     tool_handlers = importlib.import_module("mcp_file_edit.tool_handlers")
@@ -305,6 +468,140 @@ def test_file_tools_uses_live_utils_state():
 
         assert items == []
         assert fake_ops.listdir_calls == 1
+    finally:
+        state.restore()
+
+
+def test_apply_patch_tool_description_mentions_preview_workflow():
+    app = _import_server_for_tests()
+    description = app.apply_patch.__doc__ or ""
+
+    assert "preview_id" in description
+    assert "confirm_patch_preview" in description
+    assert "apply_confirmed_patch" in description
+    assert "both stdio and http" in description.lower()
+
+
+def test_preview_patch_tool_description_mentions_read_only_workflow():
+    app = _import_server_for_tests()
+    description = app.preview_patch.__doc__ or ""
+
+    assert "does not create a review session" in description
+    assert "does not return a" in description
+    assert "preview_id" in description
+    assert "dry_run=True" in description
+
+
+def test_attach_patch_preview_session_only_exposes_confirm_flow_for_valid_preview():
+    tool_result = _build_patch_preview_result(
+        "*** Begin Patch\n*** Add File: demo.txt\n+hello\n*** End Patch",
+        {
+            "success": True,
+            "partial_success": False,
+            "updates": 0,
+            "adds": 1,
+            "deletes": 0,
+            "warnings": [],
+            "changes": [
+                {
+                    "type": "add",
+                    "path": "/tmp/demo.txt",
+                    "success": True,
+                    "new_content": "hello\n",
+                }
+            ],
+        },
+    )
+
+    attached = attach_patch_preview_session(tool_result, "patch")
+    text = attached.content[0].text
+
+    assert "preview_session" in attached.structured_content
+    assert "Review workflow:" in text
+    assert "confirm_patch_preview(preview_id=...)" in text
+    assert "apply_confirmed_patch(preview_id=...)" in text
+    assert "dry_run=False" not in text
+
+
+def test_attach_patch_preview_session_hides_confirm_flow_for_failed_preview():
+    tool_result = _build_patch_preview_result(
+        "*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch",
+        {
+            "success": False,
+            "partial_success": False,
+            "updates": 0,
+            "adds": 0,
+            "deletes": 0,
+            "warnings": ["README.md: Patch validation error"],
+            "changes": [
+                {
+                    "type": "update",
+                    "path": "/tmp/README.md",
+                    "success": False,
+                    "error": "Failed to locate patch context exactly: 'old'",
+                }
+            ],
+        },
+    )
+
+    attached = attach_patch_preview_session(tool_result, "patch")
+    text = attached.content[0].text
+
+    assert "preview_session" not in attached.structured_content
+    assert "Preview workflow:" in text
+    assert "not actionable because validation failed" in text
+    assert "confirm_patch_preview(preview_id=...)" not in text
+    assert "apply_confirmed_patch(preview_id=...)" not in text
+    assert "dry_run=False" not in text
+
+
+def test_apply_confirmed_patch_uses_reviewed_preview_contents():
+    state = _StateGuard()
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = root / "demo.txt"
+            target.write_text("before\n", encoding="utf-8")
+
+            utils.FILE_OPS = utils.LocalFileOperations()
+            utils.CONNECTION_TYPE = "local"
+            utils.PROJECT_DIR = root
+
+            app = _import_server_for_tests()
+            utils.PROJECT_DIR = root
+            session = create_patch_preview_session(
+                "*** Begin Patch\n*** Update File: demo.txt\n@@\n-before\n+after\n*** End Patch",
+                {
+                    "summary": {"updates": 1, "adds": 0, "deletes": 0, "warnings": []},
+                    "files": [
+                        {
+                            "path": str(target),
+                            "filename": "demo.txt",
+                            "type": "update",
+                            "diff": "--- a/demo.txt\n+++ b/demo.txt\n@@ -1 +1 @@\n-before\n+after\n",
+                            "original_content": "before\n",
+                            "new_content": "after reviewed by human\n",
+                        }
+                    ],
+                },
+            )
+            set_patch_preview_status(
+                session.preview_id,
+                token=session.confirm_token,
+                status="confirmed",
+            )
+
+            result = _run(
+                app.apply_confirmed_patch(
+                    preview_id=session.preview_id,
+                    backup=False,
+                    create_dirs=False,
+                    validate_first=True,
+                )
+            )
+
+            assert result["success"] is True
+            assert target.read_text(encoding="utf-8") == "after reviewed by human\n"
     finally:
         state.restore()
 
@@ -541,10 +838,47 @@ def test_apply_patch_dry_run_does_not_modify_files():
                 ]
             )
 
-            result = _run(file_tools.apply_patch(patch, dry_run=True))
+            result = _run(apply_codex_patch(patch, dry_run=True))
 
             assert result["success"] is True
             assert target.read_text(encoding="utf-8") == "before\n"
+    finally:
+        state.restore()
+
+
+def test_apply_patch_appends_after_context_line():
+    state = _StateGuard()
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = root / "README.md"
+            target.write_text(
+                "## License\nThis project is licensed under the MIT License. See [LICENSE](LICENSE) for details.\n",
+                encoding="utf-8",
+            )
+
+            utils.FILE_OPS = utils.LocalFileOperations()
+            utils.CONNECTION_TYPE = "local"
+            utils.PROJECT_DIR = root
+
+            patch = "\n".join(
+                [
+                    "*** Begin Patch",
+                    "*** Update File: README.md",
+                    "@@",
+                    "This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.",
+                    "+",
+                    "+## Fun Fact",
+                    "+Why did the AI program go on a diet? It wanted to lose some bytes!",
+                    "*** End Patch",
+                ]
+            )
+
+            result = _run(apply_codex_patch(patch, dry_run=True))
+
+            assert result["success"] is True
+            assert result["updates"] == 1
+            assert "## Fun Fact" in result["changes"][0]["diff"]
     finally:
         state.restore()
 
@@ -583,6 +917,39 @@ def test_patch_file_unified_diff_uses_shared_hunk_logic():
 
             assert result["success"] is True
             assert target.read_text(encoding="utf-8") == "ALPHA\nbeta\n"
+    finally:
+        state.restore()
+
+
+def test_patch_file_literal_match_falls_back_to_whitespace_normalized_search():
+    state = _StateGuard()
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = root / "pattern.txt"
+            target.write_text("def demo():\n\treturn 1\n", encoding="utf-8")
+
+            utils.FILE_OPS = utils.LocalFileOperations()
+            utils.CONNECTION_TYPE = "local"
+            utils.PROJECT_DIR = root
+
+            result = _run(
+                file_tools.patch_file(
+                    "pattern.txt",
+                    patches=[
+                        {
+                            "find": "def demo():\n    return 1\n",
+                            "replace": "def demo():\n    return 2\n",
+                        }
+                    ],
+                    backup=False,
+                )
+            )
+
+            assert result["success"] is True
+            assert result["patches_applied"] == 1
+            assert result["changes"][0]["match_method"] == "whitespace_normalized"
+            assert target.read_text(encoding="utf-8") == "def demo():\n    return 2\n"
     finally:
         state.restore()
 
@@ -647,6 +1014,80 @@ def test_path_protection_blocks_absolute_path_outside_project():
             state.restore()
 
 
+def test_list_files_skips_symlink_escaping_project_root():
+    state = _StateGuard()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project_root = Path(tmpdir) / "project"
+        project_root.mkdir()
+        outside = Path(tmpdir) / "outside.txt"
+        outside.write_text("secret", encoding="utf-8")
+        link_path = project_root / "outside-link.txt"
+
+        try:
+            os.symlink(outside, link_path)
+        except (AttributeError, NotImplementedError, OSError):
+            pytest.skip("symlinks unavailable on this platform")
+
+        try:
+            utils.CONNECTION_TYPE = "local"
+            utils.PROJECT_DIR = project_root
+
+            result = _run(file_tools.list_files(".", pattern="*.txt"))
+            assert result == []
+        finally:
+            state.restore()
+
+
+def test_search_files_skips_symlink_escaping_project_root():
+    state = _StateGuard()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project_root = Path(tmpdir) / "project"
+        project_root.mkdir()
+        outside = Path(tmpdir) / "outside.txt"
+        outside.write_text("needle\n", encoding="utf-8")
+        link_path = project_root / "outside-link.txt"
+
+        try:
+            os.symlink(outside, link_path)
+        except (AttributeError, NotImplementedError, OSError):
+            pytest.skip("symlinks unavailable on this platform")
+
+        try:
+            utils.CONNECTION_TYPE = "local"
+            utils.PROJECT_DIR = project_root
+
+            result = _run(file_tools.search_files("needle", ".", file_pattern="*.txt"))
+            assert result["results"] == []
+            assert result["completed"] is True
+        finally:
+            state.restore()
+
+
+def test_replace_in_files_skips_symlink_escaping_project_root():
+    state = _StateGuard()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project_root = Path(tmpdir) / "project"
+        project_root.mkdir()
+        outside = Path(tmpdir) / "outside.txt"
+        outside.write_text("needle\n", encoding="utf-8")
+        link_path = project_root / "outside-link.txt"
+
+        try:
+            os.symlink(outside, link_path)
+        except (AttributeError, NotImplementedError, OSError):
+            pytest.skip("symlinks unavailable on this platform")
+
+        try:
+            utils.CONNECTION_TYPE = "local"
+            utils.PROJECT_DIR = project_root
+
+            result = _run(file_tools.replace_in_files("needle", "patched", ".", file_pattern="*.txt"))
+            assert result["results"] == []
+            assert outside.read_text(encoding="utf-8") == "needle\n"
+        finally:
+            state.restore()
+
+
 def test_set_project_directory_respects_allow_directories_allow_case(monkeypatch):
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir)
@@ -694,6 +1135,29 @@ def test_cli_allow_directories_overrides_runtime_config(monkeypatch):
     assert len(roots) == 2
     assert str(roots[0]).endswith("/tmp/a")
     assert str(roots[1]).endswith("/tmp/b")
+
+
+def test_settings_default_allowed_directories_to_work_dir():
+    settings = app_config.Settings(
+        PLATFORM="linux",
+        WORK_DIR="/tmp/project",
+        ALLOWED_DIRECTORIES=[],
+    )
+
+    assert settings.WORK_DIR == "/tmp/project"
+    assert settings.ALLOWED_DIRECTORIES == ["/tmp/project"]
+    assert utils.PROJECT_DIR == Path("/tmp/project")
+
+
+def test_settings_defaults_project_dir_to_first_allowed_root_when_work_dir_is_outside():
+    settings = app_config.Settings(
+        PLATFORM="linux",
+        WORK_DIR="/tmp/project",
+        ALLOWED_DIRECTORIES=["/tmp/elsewhere", "/tmp/other"],
+    )
+
+    assert settings.ALLOWED_DIRECTORIES == ["/tmp/elsewhere", "/tmp/other"]
+    assert utils.PROJECT_DIR == Path("/tmp/elsewhere")
 
 
 def test_get_allow_directories_linux_style_separator(monkeypatch):
