@@ -14,6 +14,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # Windows runners default Python stdio to the console codepage (cp1252),
+      # which can't encode the emoji ("❌", "✅", ...) in tool/report output.
+      # test.py reconfigures its own stdio, but this also covers every other
+      # step (like "Show test report" below) that prints such content.
+      PYTHONIOENCODING: utf-8
 
     steps:
       - uses: actions/checkout@v6
@@ -36,3 +42,14 @@ jobs:
 
       - name: Run MCP direct test runner
         run: python test.py --report report-${{ matrix.os }}.txt
+
+      - name: Show test report
+        if: always()
+        run: python -c "print(open('report-${{ matrix.os }}.txt', encoding='utf-8').read())"
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: report-${{ matrix.os }}
+          path: report-${{ matrix.os }}.txt

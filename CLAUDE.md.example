@@ -2,20 +2,38 @@
   When working in this repository, prefer MCP filesystem tools over built-in editing flows.
 
   ## Tool Preference
-  - `apply_patch`: primary tool for edits to existing files
-  - `create_file`: for new files
+  - `str_replace_based_edit_tool`: primary tool for edits to existing files (matches
+    the tool schema Claude is natively trained to call: `view`/`str_replace`/`insert`)
+  - `apply_patch`: alternative for multi-file or diff-style edits (Codex/OpenAI envelope)
+  - `create_file` or `str_replace_based_edit_tool(command="create")`: for new files
   - `write_file`: only for full rewrites or when patching is not practical
   - `search_files` and `list_files`: for discovery
-  - `read_file`: for targeted inspection
+  - `read_file` or `str_replace_based_edit_tool(command="view")`: for targeted inspection
 
   ## Claude-Specific Guidance
   - Do not use `read_file` followed by `write_file` for small changes.
   - If you already have enough recent context, patch directly.
   - If a patch fails or the anchor is weak, read more context before retrying.
   - Prefer small, stable patches over large speculative edits.
+  - `str_replace` requires `old_str` to match exactly once; include enough
+    surrounding context to make it unique rather than retrying blindly.
+  - If an edit turns out wrong, call `undo_edit` instead of re-patching over it.
 
-  ## Patch Format
-  Use Codex-style patch syntax:
+  ## Edit Tool Usage
+
+  ```text
+  str_replace_based_edit_tool(command="view", path="path/to/file.py")
+
+  str_replace_based_edit_tool(
+      command="str_replace",
+      path="path/to/file.py",
+      old_str="old_value = 1",
+      new_str="old_value = 2",
+  )
+  ```
+
+  For multi-file or diff-shaped changes, Codex-style patch syntax via `apply_patch`
+  also works:
 
   ```text
   *** Begin Patch

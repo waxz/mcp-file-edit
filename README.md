@@ -9,7 +9,7 @@ A Model Context Protocol (MCP) server for comprehensive file system operations w
 | **File Operations** | Read, write, create, delete, move, copy files |
 | **Directory Management** | List files, create directories, recursive operations |
 | **Search & Replace** | Regex search across files, multi-file find/replace |
-| **Patching** | Line-based, pattern-based, context-based, and Codex-style `apply_patch` modifications |
+| **Patching** | Line-based, pattern-based, context-based, Codex/OpenAI-style `apply_patch`, and Anthropic-style `str_replace_based_edit_tool` modifications |
 | **Code Analysis** | Extract functions, classes, and code structure |
 | **SSH Support** | Remote file operations, upload/download, rsync sync |
 | **Git Operations** | Full git support for local and remote repositories |
@@ -58,12 +58,25 @@ claude config set permissions.deny "['Edit', 'Write']"
 
 Restart Claude Desktop after configuration.
 
+### Two File-Editing Protocols: Claude and OpenAI
+
+This server exposes two purpose-built editing tools, one per model family's native
+tool-calling conventions, both operating on the same project directory and files:
+
+| Tool | Protocol | Best for |
+|------|----------|----------|
+| `str_replace_based_edit_tool` | Anthropic's `str_replace_based_edit_tool` commands (`view`, `create`, `str_replace`, `insert`, `undo_edit`) | Claude models, which are trained to call this exact tool shape |
+| `apply_patch` | OpenAI/Codex-style `*** Begin Patch` / `*** Update File` unified-diff envelope | GPT/Codex/OpenAI models, which are trained on this exact envelope |
+
+Pick whichever tool matches the calling model; both are safe to use interchangeably
+against the same files, and other agents (OpenCode, etc.) can use either.
+
 ### Claude Code Guidance
 
 When Claude Code uses this MCP server, prefer tools in this order:
 
-1. `apply_patch` for targeted edits to existing files
-2. `create_file` for new files
+1. `str_replace_based_edit_tool` (`str_replace`/`insert`) or `apply_patch` for targeted edits to existing files
+2. `create_file` (or `str_replace_based_edit_tool` with `command="create"`) for new files
 3. `write_file` only for full rewrites when patching is unnecessary
 
 Avoid the brittle pattern of `read_file` followed by `write_file` for a small change. That loses context, makes anchors weaker, and is more likely to corrupt unrelated content when the model diagnosis is wrong.
@@ -149,6 +162,32 @@ For a normal code fix, the guidance should be:
 - modify with `apply_patch`
 - avoid whole-file rewrites unless necessary
 
+For Claude specifically, prefer `str_replace_based_edit_tool` over `apply_patch`
+when available - it matches the exact tool schema Claude is trained to call:
+
+```text
+# 1. Inspect
+str_replace_based_edit_tool(command="view", path="src/example.py")
+
+# 2. Edit - old_str must match exactly once in the file
+str_replace_based_edit_tool(
+    command="str_replace",
+    path="src/example.py",
+    old_str="old_value = 1",
+    new_str="old_value = 2",
+)
+
+# 3. Undo if the edit was wrong
+str_replace_based_edit_tool(command="undo_edit", path="src/example.py")
+```
+
+`str_replace_based_edit_tool` commands:
+- `view` - show a file (numbered like `cat -n`, optionally via `view_range`) or list a directory up to 2 levels deep
+- `create` - create (or overwrite) a file with `file_text`
+- `str_replace` - replace the single, unique occurrence of `old_str` with `new_str`
+- `insert` - insert `new_str` after line `insert_line` (`0` = start of file)
+- `undo_edit` - revert the last edit made to a file through this tool
+
 ### Code Analysis
 
 ```python
@@ -191,7 +230,8 @@ diff = git_diff()
 - `search_files` - Search for patterns with regex support
 - `replace_in_files` - Find and replace across multiple files
 - `patch_file` - Apply precise modifications to files
-- `apply_patch` - Apply robust multi-file patches using Codex-style patch envelopes
+- `apply_patch` - Apply robust multi-file patches using Codex/OpenAI-style patch envelopes
+- `str_replace_based_edit_tool` - Anthropic-compatible text editor tool for Claude (`view`/`create`/`str_replace`/`insert`/`undo_edit`)
 
 ### Project Management
 - `set_project_directory` - Set working directory (local or SSH)

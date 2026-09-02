@@ -93,16 +93,24 @@ def build_server(settings: config.Settings ) -> FastMCP:
     """Initialize runtime settings and return configured FastMCP server."""
     
 
-    # Patch ServerSession to swallow ClosedResourceError when sending response after client disconnects
-    _original_send_response = ServerSession._send_response
+    # Patch ServerSession to swallow ClosedResourceError when sending response after client disconnects.
+    # `_send_response` is a private mcp SDK API that has moved/been renamed across
+    # versions, so guard the patch instead of hard-failing server startup if it's gone.
+    _original_send_response = getattr(ServerSession, "_send_response", None)
 
-    async def _patched_send_response(self, request_id, response):
-        try:
-            await _original_send_response(self, request_id, response)
-        except ClosedResourceError:
-            logging.info("ClosedResourceError suppressed while sending response")
+    if _original_send_response is not None:
+        async def _patched_send_response(self, request_id, response):
+            try:
+                await _original_send_response(self, request_id, response)
+            except ClosedResourceError:
+                logging.info("ClosedResourceError suppressed while sending response")
 
-    ServerSession._send_response = _patched_send_response
+        ServerSession._send_response = _patched_send_response
+    else:
+        logging.debug(
+            "ServerSession._send_response not found in this mcp SDK version; "
+            "skipping ClosedResourceError suppression patch."
+        )
 
 
 

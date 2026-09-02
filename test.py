@@ -23,6 +23,14 @@ import sys
 
 from fastmcp import Client
 
+# Scenario output includes emoji (e.g. "❌", "✅") that the default Windows
+# console codepage (cp1252) can't encode, crashing plain print() calls with
+# UnicodeEncodeError. Force UTF-8 stdio on every platform so scenario output
+# prints reliably regardless of the terminal's default encoding.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 PROJECT_ROOT = Path(__file__).resolve().parent
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
