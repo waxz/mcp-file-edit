@@ -14,6 +14,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # Windows runners default Python stdio to the console codepage (cp1252),
+      # which can't encode the emoji ("❌", "✅", ...) in tool/report output.
+      # test.py reconfigures its own stdio, but this also covers every other
+      # step (like "Show test report" below) that prints such content.
+      PYTHONIOENCODING: utf-8
 
     steps:
       - uses: actions/checkout@v6
