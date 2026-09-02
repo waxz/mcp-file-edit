@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `str_replace_based_edit_tool`: new MCP tool implementing Anthropic's native
+  text-editor protocol (`view`, `create`, `str_replace`, `insert`,
+  `undo_edit`) so Claude models can edit files using the exact tool shape
+  they are trained on, alongside the existing Codex-style `apply_patch`
+  (OpenAI-compatible) unified-diff tool. Both tools share the same project
+  directory, path-safety checks, and file backend, so they can be mixed
+  freely against the same files.
+- Per-file `undo_edit` history for edits made through
+  `str_replace_based_edit_tool` (bounded to the last 50 edits per file).
+
 ## [1.3.1] - 2025-06-30
 
 ### Changed

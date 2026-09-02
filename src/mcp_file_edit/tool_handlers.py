@@ -38,6 +38,9 @@ from .file_patch_tools import(
     attach_patch_preview_session,
 
 )
+from .text_editor_tool import (
+    str_replace_based_edit_tool as str_replace_based_edit_tool_,
+)
 from .file_tools import (
     list_files as list_files_,
     read_file as read_file_,
@@ -225,6 +228,75 @@ def register_tools(server: FastMCP) -> None:
     ) -> Any:
         """Apply targeted patches to one file. For agent-driven code edits, prefer `apply_patch` when possible."""
         return await patch_file_(path, patches, backup, dry_run, create_dirs)
+
+    @server.tool
+    async def str_replace_based_edit_tool(
+        command: str,
+        path: str,
+        file_text: Optional[str] = None,
+        old_str: Optional[str] = None,
+        new_str: Optional[str] = None,
+        insert_line: Optional[int] = None,
+        view_range: Optional[list[int]] = None,
+        create_dirs: bool = False,
+    ) -> Any:
+        """
+        Anthropic-compatible text editor tool for Claude (str_replace_based_edit_tool protocol).
+
+        This is the native file-editing tool schema Claude models are trained to
+        call. Prefer it over `apply_patch` when the calling agent is Claude;
+        OpenAI/Codex-style agents should prefer `apply_patch` (Codex `apply_patch`
+        envelope) instead. Both operate on the same project directory and file
+        backend, so either can be used interchangeably against the same files.
+
+        Commands:
+        - view: Show a file's content (numbered like `cat -n`, optionally
+          restricted to `view_range`), or list a directory up to 2 levels deep.
+        - create: Create (or overwrite) a file with `file_text`.
+        - str_replace: Replace the single, unique occurrence of `old_str` with
+          `new_str` in an existing file. Include enough surrounding context in
+          `old_str` that it matches exactly once; the call fails otherwise.
+        - insert: Insert `new_str` immediately after line `insert_line`
+          (0 = insert at the start of the file).
+        - undo_edit: Revert the most recent create/str_replace/insert made to
+          `path` through this tool.
+
+        Workflow:
+        1. `view` the file (or directory) to see current content and line numbers.
+        2. Make one targeted edit with `str_replace` or `insert`.
+        3. `view` again to confirm, or `undo_edit` if the edit was wrong.
+
+        Args:
+            command: One of "view", "create", "str_replace", "insert", "undo_edit".
+            path: File or directory path, relative to the active project directory.
+            file_text: Full file content, required for `create`.
+            old_str: Exact text to replace, required for `str_replace`.
+            new_str: Replacement text for `str_replace`; text to insert for `insert`.
+            insert_line: Line number after which to insert, required for `insert`.
+            view_range: Optional [start, end] 1-based inclusive line range for
+                `view` on a file; use end=-1 to read to the end of the file.
+            create_dirs: Create missing parent directories for `create`.
+
+        Returns:
+            Dict with `output` (human-readable confirmation, matching what the
+            Anthropic text-editor tool returns) plus structured fields for the
+            given command (e.g. `content`/`entries` for `view`).
+
+        Raises:
+            ValueError: For invalid commands, missing required parameters, path
+                safety violations, or when `str_replace`/`insert` preconditions
+                are not met (e.g. `old_str` not found, or not unique).
+        """
+        return await str_replace_based_edit_tool_(
+            command,
+            path,
+            file_text,
+            old_str,
+            new_str,
+            insert_line,
+            view_range,
+            create_dirs,
+        )
 
     @server.tool
     async def patch_format_help() -> str:
