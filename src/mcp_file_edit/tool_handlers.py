@@ -12,8 +12,6 @@ from typing import Dict, List, Any, Optional
 
 from pathlib import Path
 
-from fastmcp.server.tasks import TaskConfig
-
 from . import config
 
 
@@ -129,7 +127,7 @@ def register_tools(server: FastMCP) -> None:
     """Register MCP tools."""
 
     # File Management Tools
-    @server.tool(task=TaskConfig(mode="optional"))
+    @server.tool
     async def list_files(
         path: str = ".",
         pattern: str = "*",

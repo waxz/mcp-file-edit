@@ -1730,7 +1730,10 @@ def _format_patch_preview_text(
     if failed_changes:
         lines.append("Failed changes:")
         for change in failed_changes:
-            lines.append(f"- {change.get('path', 'unknown')}: {change.get('error', 'Unknown preview failure')}")
+            path = change.get("path", "unknown")
+            error = change.get("error", "Unknown preview failure")
+            lines.append(f"❌ FAILED: {path}")
+            lines.append(f"   Error: {error}")
         lines.append("")
 
     if not diff_entries and not failed_changes:
