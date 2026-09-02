@@ -36,3 +36,14 @@ jobs:
 
       - name: Run MCP direct test runner
         run: python test.py --report report-${{ matrix.os }}.txt
+
+      - name: Show test report
+        if: always()
+        run: python -c "print(open('report-${{ matrix.os }}.txt', encoding='utf-8').read())"
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: report-${{ matrix.os }}
+          path: report-${{ matrix.os }}.txt
