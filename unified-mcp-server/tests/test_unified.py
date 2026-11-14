@@ -11,7 +11,7 @@ from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
 from unified_mcp_server.config import load_settings
-from unified_mcp_server.server import ApiKeyAuth, _extract_api_key, build_unified_server
+from unified_mcp_server.server import ApiKeyAuth, _extract_api_key, build_server
 
 
 def _write_config(tmp_path: Path, body: str) -> str:
@@ -46,7 +46,7 @@ async def _build(tmp_path: Path, extra: str = "", *argv: str, top: str = ""):
     project.mkdir(exist_ok=True)
     cfg = _write_config(tmp_path, top + BASE_CONFIG + extra)
     settings = load_settings(["-c", cfg, "-w", str(project), *argv])
-    return await build_unified_server(settings), project
+    return build_server(settings), project
 
 
 async def test_exposes_both_tool_sets(tmp_path):
@@ -96,7 +96,7 @@ async def test_explicit_shell_host_root_is_not_overridden(tmp_path):
     other.mkdir()
     extra = f'\n[DOCKER_CONFIG.linux]\nhost_root = "{other}"\nallow_directories_host = ["{other}"]\n'
     app, project = await _build(tmp_path, extra)
-    from shell_mcp_server import config as sh_config
+    from unified_mcp_server import config as sh_config
 
     assert sh_config.SETTINGS.DOCKER_SANDBOX_HOST_ROOT == str(other.resolve())
     async with Client(app) as client:

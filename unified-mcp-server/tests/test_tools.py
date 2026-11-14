@@ -17,7 +17,7 @@ import pytest
 from fastmcp import Client
 
 from unified_mcp_server.config import load_settings
-from unified_mcp_server.server import build_unified_server
+from unified_mcp_server.server import build_server
 
 pytestmark = pytest.mark.skipif(
     sys.platform == "win32", reason="shell/tmux fixtures assume a POSIX shell"
@@ -83,7 +83,7 @@ def project(tmp_path: Path) -> Path:
 async def client(tmp_path: Path, project: Path):
     cfg = tmp_path / "config.toml"
     cfg.write_text(CONFIG)
-    app = await build_unified_server(load_settings(["-c", str(cfg), "-w", str(project)]))
+    app = build_server(load_settings(["-c", str(cfg), "-w", str(project)]))
     async with Client(app) as c:
         yield c
 
@@ -268,7 +268,7 @@ class TestCodeAnalysis:
         assert "greet" in names
 
     async def test_list_functions_includes_async(self, client):
-        # Upstream skipped async defs (no visit_AsyncFunctionDef); fixed in patches.
+        # Regression: async defs used to be skipped (no visit_AsyncFunctionDef).
         funcs = {f["name"]: f for f in await call(client, "list_functions", {"path": "mod.py"})}
         assert funcs["main"]["is_async"] is True and funcs["main"]["line_start"] == 11
         assert funcs["fetch"]["is_async"] is True and funcs["fetch"]["class_name"] == "Greeter"
@@ -435,7 +435,7 @@ class TestTmuxTools:
 
     async def test_execute(self, client):
         # Upstream failed this on every GitHub runner (C-c reached the pane
-        # before its shell started); fixed in unified_mcp_server.patches.
+        # before its shell started); fixed in shell/tmux_commands.py.
         session = "native_mcp_ci_exec"
         try:
             await client.call_tool("tmux_execute", {"command": "t_echo", "session_name": "ci_exec"})
@@ -447,7 +447,7 @@ class TestTmuxTools:
             _tmux("kill-session", "-t", session)
 
     async def test_list_sessions(self, client, ready_tmux_session):
-        # Upstream crashed here (cwd=None without a sandbox work dir); fixed in patches.
+        # Regression: used to crash with cwd=None when no sandbox work dir is set.
         sessions = await call(client, "tmux_list_session")
         assert ready_tmux_session in sessions
         assert "" not in sessions

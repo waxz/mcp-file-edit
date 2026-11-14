@@ -45,8 +45,7 @@ jobs:
           activate-environment: true
           enable-cache: true
 
-      # mcp-file-edit comes from this checkout (path source); shell-mcp-server
-      # from GitHub (see unified-mcp-server/pyproject.toml [tool.uv.sources]).
+      # Self-contained package: no dependency on mcp-file-edit or shell-mcp-server.
       - name: Install unified server
         run: uv pip install -e "unified-mcp-server[dev]"
 
@@ -55,6 +54,13 @@ jobs:
           python --version
           python -c "import fastmcp; print('fastmcp', fastmcp.__version__)"
           uv pip list | grep -Ei "mcp|fastmcp|ruff"
+          # Fail if either original package slipped back in as a dependency.
+          for pkg in mcp_file_edit shell_mcp_server; do
+            if python -c "import $pkg" 2>/dev/null; then
+              echo "::error::$pkg is installed; unified-mcp-server must be self-contained"
+              exit 1
+            fi
+          done
 
       - name: Run MCP tool tests
         working-directory: unified-mcp-server
