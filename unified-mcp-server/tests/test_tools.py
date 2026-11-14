@@ -250,6 +250,8 @@ class Greeter:
     def greet(self, name):
         return f"hi {name}"
 
+    async def fetch(self):
+        return 1
 
 async def main():
     return Greeter().greet("x")
@@ -265,13 +267,18 @@ class TestCodeAnalysis:
         names = {f["name"] for f in await call(client, "list_functions", {"path": "mod.py"})}
         assert "greet" in names
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="upstream bug: code_analyzer has no visit_AsyncFunctionDef, so async defs are skipped",
-    )
     async def test_list_functions_includes_async(self, client):
-        names = {f["name"] for f in await call(client, "list_functions", {"path": "mod.py"})}
-        assert "main" in names
+        # Upstream skipped async defs (no visit_AsyncFunctionDef); fixed in patches.
+        funcs = {f["name"]: f for f in await call(client, "list_functions", {"path": "mod.py"})}
+        assert funcs["main"]["is_async"] is True and funcs["main"]["line_start"] == 11
+        assert funcs["fetch"]["is_async"] is True and funcs["fetch"]["class_name"] == "Greeter"
+        assert funcs["greet"]["is_async"] is False
+
+    async def test_async_function_at_line_and_in_structure(self, client):
+        fn = await call(client, "get_function_at_line", {"path": "mod.py", "line_number": 12})
+        assert "main" in json.dumps(fn)
+        data = await call(client, "get_code_structure", {"path": "mod.py"})
+        assert {"main", "fetch", "greet"} <= {f["name"] for f in data["functions"]}
 
     async def test_structure(self, client):
         data = await call(client, "get_code_structure", {"path": "mod.py"})
@@ -439,9 +446,16 @@ class TestTmuxTools:
         finally:
             _tmux("kill-session", "-t", session)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="upstream bug: tmux_list_session passes cwd=None when no sandbox work_dir is set",
-    )
-    async def test_list_sessions(self, client):
-        await call(client, "tmux_list_session")
+    async def test_list_sessions(self, client, ready_tmux_session):
+        # Upstream crashed here (cwd=None without a sandbox work dir); fixed in patches.
+        sessions = await call(client, "tmux_list_session")
+        assert ready_tmux_session in sessions
+        assert "" not in sessions
+
+    async def test_list_sessions_without_tmux_server(self, client, tmp_path, monkeypatch):
+        # A fresh socket dir means no tmux server: empty list, not an error.
+        monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
+        assert (await client.call_tool("tmux_list_session", {})).data == []
+
+    async def test_list_sessions_rejects_unknown_shell(self, client):
+        await call_error(client, "tmux_list_session", {"shell": "zsh-nope"})

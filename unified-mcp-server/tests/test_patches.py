@@ -122,3 +122,56 @@ def test_bootstrap_waits_for_slow_shell(tmp_path):
         assert "alive-2" in out
     finally:
         subprocess.run(["tmux", "kill-server"], env=env, capture_output=True)
+
+
+# ------------------------------------------------------ async functions
+PARITY_SOURCE = '''
+import functools
+
+@functools.lru_cache(maxsize=None)
+def top(a: int, *args, b=2, **kw) -> int:
+    """Doc."""
+    def inner(x):
+        return x
+    return inner(a)
+
+class K(object):
+    @staticmethod
+    def method(self, y: str):
+        pass
+'''
+
+
+def test_async_extractor_matches_upstream_on_sync_code():
+    """For code without async defs the replacement must return exactly what upstream did."""
+    from conftest import UPSTREAM_EXTRACT_FUNCTIONS
+
+    assert UPSTREAM_EXTRACT_FUNCTIONS is not patches._python_functions_with_async
+    result = patches._python_functions_with_async(PARITY_SOURCE)
+    assert {f["name"] for f in result} == {"top", "inner", "method"}
+    assert result == UPSTREAM_EXTRACT_FUNCTIONS(PARITY_SOURCE)
+
+
+def test_async_extractor_finds_async_defs():
+    src = "class A:\n    async def m(self):\n        pass\n\nasync def f():\n    pass\n"
+    funcs = {f["name"]: f for f in patches._python_functions_with_async(src)}
+    assert funcs["m"]["is_async"] and funcs["m"]["class_name"] == "A"
+    assert funcs["f"]["is_async"] and not funcs["f"]["is_method"]
+
+
+# ------------------------------------------------------- tmux sessions
+async def test_tmux_list_session_replaced_in_namespaced_mode(tmp_path, monkeypatch):
+    from fastmcp import Client
+
+    from unified_mcp_server.config import load_settings
+    from unified_mcp_server.server import build_unified_server
+
+    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))  # no tmux server here
+    project = tmp_path / "p"
+    project.mkdir()
+    app = await build_unified_server(
+        load_settings(["-c", "none.toml", "-w", str(project), "--namespaced"])
+    )
+    async with Client(app) as client:
+        res = await client.call_tool("shell_tmux_list_session", {})
+    assert res.data == []

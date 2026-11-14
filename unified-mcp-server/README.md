@@ -47,6 +47,16 @@ without changing either upstream package:
   failed every time on GitHub runners. The session bootstrap now waits until
   the pane shows its prompt, and the pane reset no longer sends `C-c` (the
   session is always new, so there is nothing to interrupt).
+- **`async def` functions missing from code analysis**: mcp-file-edit's Python
+  visitor only handled `FunctionDef`, so `list_functions`,
+  `get_function_at_line`, `search_functions` and `get_code_structure` skipped
+  every `async def`. The extractor is replaced by one with identical output
+  for sync code (a test checks that) that also handles `AsyncFunctionDef`.
+- **`tmux_list_session` crash**: it ran `tmux ls` in the sandbox with
+  `cwd=None` whenever no sandbox `work_dir` was configured, and treated "no
+  tmux server running" as an error. The tool is replaced: sandbox sessions are
+  listed only when a sandbox exists, host sessions when tmux is installed, an
+  absent server gives `[]`, and blank names are dropped.
 
 Each fix checks that the upstream code still looks the way it expects and
 skips itself otherwise, so an upstream fix isn't overridden.
@@ -114,11 +124,8 @@ pytest -q
   directory, the installed console script over stdio, and API-key auth over
   real HTTP.
 
-Known upstream bugs that are still open are marked `xfail(strict=True)`, so CI
-goes red once one is fixed and the marker can be removed:
-
-- `list_functions` skips `async def` functions (no `visit_AsyncFunctionDef`).
-- `tmux_list_session` crashes when no sandbox `work_dir` is configured.
+Tests for the four upstream bugs fixed at runtime (see above) now run as
+normal tests.
 
 CI: `.github/workflows/unified-mcp-tools.yml` runs the suite on Ubuntu with
 Python 3.11, 3.12 and 3.13 on every push and pull request.

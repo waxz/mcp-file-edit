@@ -152,19 +152,18 @@ async def build_unified_server(settings: UnifiedSettings) -> FastMCP:
 
     children: list[tuple[str, FastMCP]] = []
     shell_linked = False
+    shell_app = None
+    platform = ""
     if settings.enable_files:
         children.append((FS_NAMESPACE, _build_file_server(settings)))
     if settings.enable_shell:
+        from shell_mcp_server import config as sh_config
+
         shell_app, shell_linked = _build_shell_server(settings)
+        platform = sh_config.SETTINGS.PLATFORM
         children.append((SHELL_NAMESPACE, shell_app))
 
-    from shell_mcp_server import config as sh_config
-
-    apply_upstream_fixes(
-        files=settings.enable_files,
-        shell=settings.enable_shell,
-        platform=sh_config.SETTINGS.PLATFORM if settings.enable_shell else "",
-    )
+    apply_upstream_fixes(files=settings.enable_files, shell_app=shell_app, platform=platform)
 
     if not settings.namespaced and len(children) > 1:
         names = [await _tool_names(child) for _, child in children]
