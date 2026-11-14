@@ -80,16 +80,32 @@ Precedence: built-in defaults → config file → CLI flags.
 - Set `IS_IN_DOCKER = true` when the server itself runs in a container: all
   commands then run directly inside it.
 
-## Tests
+## Tests & CI
 
 ```bash
 uv pip install -e ".[dev]"
 pytest -q
 ```
 
-The tests cover the combined tool list, namespacing, a file written by
-`write_file` being read by a shell command, the shell following
-`set_project_directory`, and API-key auth over real HTTP.
+- `tests/test_tools.py` calls every tool family through a real MCP client:
+  file operations, path-safety rejections, the patch preview → confirm → apply
+  workflow, git, tree-sitter code analysis, ruff lint/format, project directory
+  switching, trusted shell commands, process list/terminate, and tmux. It also
+  checks the exact set of 58 registered tools, so a tool can't disappear
+  silently.
+- `tests/test_unified.py` covers config, namespacing, the shared project
+  directory, the installed console script over stdio, and API-key auth over
+  real HTTP.
+
+Known upstream bugs are marked `xfail(strict=True)`, so CI goes red once one
+is fixed and the marker can be removed:
+
+- `list_functions` skips `async def` functions (no `visit_AsyncFunctionDef`).
+- `remove_directory` uses `shutil.rmtree(onexc=...)`, which needs Python 3.12+.
+- `tmux_list_session` crashes when no sandbox `work_dir` is configured.
+
+CI: `.github/workflows/unified-mcp-tools.yml` runs the suite on Ubuntu with
+Python 3.11, 3.12 and 3.13 on every push and pull request.
 
 ## Dependency note
 

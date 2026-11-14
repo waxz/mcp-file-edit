@@ -162,3 +162,21 @@ async def test_http_api_key_auth(tmp_path):
             assert "nope" not in str(excinfo.value)  # never echo the presented key
 
         tg.cancel_scope.cancel()
+
+
+async def test_cli_entry_point_over_stdio(tmp_path):
+    """Launch the installed console script, as an MCP client would."""
+    import shutil
+    import sys
+
+    from fastmcp.client.transports import StdioTransport
+
+    exe = shutil.which("unified-mcp-server") or str(Path(sys.executable).parent / "unified-mcp-server")
+    project = tmp_path / "project"
+    project.mkdir()
+    transport = StdioTransport(exe, ["-c", str(tmp_path / "none.toml"), "-w", str(project)])
+    async with Client(transport) as client:
+        names = {t.name for t in await client.list_tools()}
+        assert {"read_file", "execute_command"} <= names
+        await client.call_tool("write_file", {"path": "x.txt", "content": "via stdio"})
+    assert (project / "x.txt").read_text() == "via stdio"
