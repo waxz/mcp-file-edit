@@ -105,7 +105,8 @@ is fixed and the marker can be removed:
 - `tmux_list_session` crashes when no sandbox `work_dir` is configured.
 - `tmux_execute` sends `C-c` to a new pane before its shell has started; on a
   slow machine (e.g. GitHub runners) that kills the shell and the tmux server.
-  The main tmux test uses a pane shell that ignores SIGINT during startup.
+  Its test is a non-strict xfail (it passes on fast machines); the other tmux
+  tools are tested on a session created directly once its prompt is up.
 
 CI: `.github/workflows/unified-mcp-tools.yml` runs the suite on Ubuntu with
 Python 3.11, 3.12 and 3.13 on every push and pull request.

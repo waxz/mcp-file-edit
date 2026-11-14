@@ -59,7 +59,7 @@ jobs:
       - name: Run MCP tool tests
         working-directory: unified-mcp-server
         run: >
-          python -m pytest -v -rxXs
+          python -m pytest -v -ra
           --junitxml=../test-results-py${{ matrix.python-version }}.xml
 
       - name: Upload test results
