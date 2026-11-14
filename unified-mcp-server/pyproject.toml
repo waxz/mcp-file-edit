@@ -1,0 +1,35 @@
+[project]
+name = "unified-mcp-server"
+version = "0.1.0"
+description = "One MCP server combining file editing (mcp-file-edit) and shell execution (shell-mcp-server)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "mcp-file-edit",
+    "shell-mcp-server",
+    # fastmcp 4.x removed fastmcp.server.tasks, which both sub-servers import.
+    "fastmcp[tasks]>=3.0.0,<4",
+    "toml>=0.10.0",
+]
+
+[project.scripts]
+unified-mcp-server = "unified_mcp_server:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.21"]
+
+[tool.uv.sources]
+mcp-file-edit = { path = "..", editable = true }
+shell-mcp-server = { git = "https://github.com/waxz/shell-mcp-server" }
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

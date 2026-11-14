@@ -1,0 +1,14 @@
+# Built-in defaults for unified-mcp-server. Override any key in your own
+# config.toml (passed with -c). See config.example.toml for every option.
+TRANSPORT = "stdio"
+HOST = "127.0.0.1"
+PORT = 8000
+PATH = "/mcp"
+COMMAND_TIMEOUT = 30
+SAFETY_MODE = "strict"
+IS_IN_DOCKER = false
+
+[UNIFIED]
+namespaced = false
+enable_files = true
+enable_shell = true

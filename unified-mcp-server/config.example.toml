@@ -1,0 +1,47 @@
+# unified-mcp-server configuration (superset of the mcp-file-edit and
+# shell-mcp-server formats -- existing config files from either keep working).
+
+# ---- shared server settings -------------------------------------------------
+TRANSPORT = "http"          # "stdio" or "http"
+HOST = "127.0.0.1"
+PORT = 8000
+PATH = "/mcp"
+# Comma-separated; checked on every tool call over HTTP.
+# Send as "Authorization: Bearer <key>" or "x-api-key: <key>".
+# API_KEYS = "key-one,key-two"
+
+[UNIFIED]
+namespaced = false          # true -> tools become fs_* and shell_*
+enable_files = true
+enable_shell = true
+
+# ---- file tools (mcp-file-edit) ---------------------------------------------
+[CONFIG.linux]
+work_dir = "/home/me/projects/repo"
+allow_directories = ["."]   # relative entries resolve against work_dir
+
+[CONFIG.windows]
+work_dir = "C:/Users/me/projects/repo"
+allow_directories = ["."]
+
+# ---- shell tools (shell-mcp-server) -----------------------------------------
+COMMAND_TIMEOUT = 30
+SAFETY_MODE = "strict"      # "strict" forces bash for untrusted commands
+# true when this server itself runs inside a container: commands run directly.
+# false on a host: untrusted commands are wrapped in the `drun` sandbox helper.
+IS_IN_DOCKER = false
+
+# If [DOCKER_CONFIG.<os>] host_root is omitted, the shell tools share the file
+# tools' project directory (and follow set_project_directory).
+# [DOCKER_CONFIG.linux]
+# host_root = "/home/me/projects/repo"
+# work_dir = "/app/dev/repo"          # path inside the sandbox container
+# allow_directories_host = ["."]
+# allow_directories_docker = [".", "/tmp"]
+
+# Trusted commands run on the host, by name: execute_command(command="t_test", ...)
+# [TRUSTED_COMMANDS.t_test]
+# command = "pytest -q"
+# shell = "bash"
+# cwd = "/home/me/projects/repo"
+# description = "run the test suite"
