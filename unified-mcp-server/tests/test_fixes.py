@@ -35,22 +35,36 @@ async def test_local_rmtree_works_on_this_python(tmp_path):
     assert not (tmp_path / "tree").exists()
 
 
-@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="needs POSIX non-root")
-async def test_local_rmtree_clears_readonly(tmp_path):
-    """The read-only handler must run on every Python version."""
-    from unified_mcp_server.files.file_operations import LocalFileOperations
+async def test_local_rmtree_calls_error_handler(tmp_path, monkeypatch):
+    """The error handler must be wired up on every Python version.
 
-    tree = tmp_path / "tree"
-    (tree / "ro").mkdir(parents=True)
-    (tree / "ro" / "f.txt").write_text("x")
-    (tree / "ro").chmod(stat.S_IRUSR | stat.S_IXUSR)
-    try:
-        await LocalFileOperations().rmtree(tree)
-    finally:
-        if tree.exists():
-            for p in tree.rglob("*"):
-                p.chmod(stat.S_IRWXU)
-    assert not tree.exists()
+    A failing unlink must reach handle_remove_readonly (via onexc on 3.12+,
+    onerror before); the handler then retries the removal.
+    """
+    from unified_mcp_server.files import file_operations
+
+    calls = []
+    real_unlink = os.unlink
+    failed_once = set()
+
+    def flaky_unlink(path, *args, **kwargs):
+        if str(path).endswith("f.txt") and "f" not in failed_once:
+            failed_once.add("f")
+            raise PermissionError(13, "simulated read-only file", str(path))
+        return real_unlink(path, *args, **kwargs)
+
+    def handler(func, path, exc):
+        calls.append((func, path))
+        func(path)  # retry, as handle_remove_readonly does after chmod
+
+    monkeypatch.setattr(os, "unlink", flaky_unlink)
+    monkeypatch.setattr(file_operations, "handle_remove_readonly", handler)
+    tree = tmp_path / "tree" / "sub"
+    tree.mkdir(parents=True)
+    (tree / "f.txt").write_text("x")
+    await file_operations.LocalFileOperations().rmtree(tmp_path / "tree")
+    assert calls, "rmtree never called the error handler"
+    assert not (tmp_path / "tree").exists()
 
 
 # ---------------------------------------------------------- async functions
