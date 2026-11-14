@@ -21,6 +21,7 @@ from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 from .config import UnifiedSettings, load_settings
+from .patches import apply_upstream_fixes
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +157,14 @@ async def build_unified_server(settings: UnifiedSettings) -> FastMCP:
     if settings.enable_shell:
         shell_app, shell_linked = _build_shell_server(settings)
         children.append((SHELL_NAMESPACE, shell_app))
+
+    from shell_mcp_server import config as sh_config
+
+    apply_upstream_fixes(
+        files=settings.enable_files,
+        shell=settings.enable_shell,
+        platform=sh_config.SETTINGS.PLATFORM if settings.enable_shell else "",
+    )
 
     if not settings.namespaced and len(children) > 1:
         names = [await _tool_names(child) for _, child in children]

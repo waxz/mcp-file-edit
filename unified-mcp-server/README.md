@@ -34,6 +34,23 @@ upstream flow straight through.
   `config.toml` with the author's own paths (and a sample API key); the unified
   server reads only its own defaults and your file.
 
+## Upstream bugs fixed at runtime
+
+`unified_mcp_server/patches.py` fixes these when the unified server starts,
+without changing either upstream package:
+
+- **`remove_directory`/`delete_file` on Python < 3.12**: mcp-file-edit calls
+  `shutil.rmtree(onexc=...)`, which only exists from 3.12, so they crashed. Its
+  module's `shutil` is replaced by a shim that maps `onexc` onto `onerror`.
+- **`tmux_execute` startup race**: it sent `C-c` to the new pane before the
+  pane's shell had started, killing the shell (and the tmux server). This
+  failed every time on GitHub runners. The session bootstrap now waits until
+  the pane shows its prompt, and the pane reset no longer sends `C-c` (the
+  session is always new, so there is nothing to interrupt).
+
+Each fix checks that the upstream code still looks the way it expects and
+skips itself otherwise, so an upstream fix isn't overridden.
+
 ## Install & run
 
 ```bash
@@ -97,16 +114,11 @@ pytest -q
   directory, the installed console script over stdio, and API-key auth over
   real HTTP.
 
-Known upstream bugs are marked `xfail(strict=True)`, so CI goes red once one
-is fixed and the marker can be removed:
+Known upstream bugs that are still open are marked `xfail(strict=True)`, so CI
+goes red once one is fixed and the marker can be removed:
 
 - `list_functions` skips `async def` functions (no `visit_AsyncFunctionDef`).
-- `remove_directory` uses `shutil.rmtree(onexc=...)`, which needs Python 3.12+.
 - `tmux_list_session` crashes when no sandbox `work_dir` is configured.
-- `tmux_execute` sends `C-c` to a new pane before its shell has started; on a
-  slow machine (e.g. GitHub runners) that kills the shell and the tmux server.
-  Its test is a non-strict xfail (it passes on fast machines); the other tmux
-  tools are tested on a session created directly once its prompt is up.
 
 CI: `.github/workflows/unified-mcp-tools.yml` runs the suite on Ubuntu with
 Python 3.11, 3.12 and 3.13 on every push and pull request.

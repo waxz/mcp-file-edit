@@ -135,12 +135,8 @@ class TestFileTools:
         await call(client, "delete_file", {"path": "e.txt"})
         assert not (project / "e.txt").exists()
 
-    @pytest.mark.xfail(
-        sys.version_info < (3, 12),
-        strict=True,
-        reason="upstream bug: remove_directory uses shutil.rmtree(onexc=...), Python 3.12+ only",
-    )
     async def test_create_and_remove_directory(self, client, project):
+        # remove_directory crashed on Python < 3.12 upstream (rmtree onexc=).
         await call(client, "create_directory", {"path": "newdir"})
         assert (project / "newdir").is_dir()
         assert await call(client, "remove_directory", {"path": "newdir"}) is True
@@ -378,7 +374,7 @@ def _tmux(*args: str) -> str:
 async def ready_tmux_session():
     """A tmux session created outside the tools, returned once its shell prompt is up.
 
-    tmux_execute can't be used for setup: it has a startup race (see below).
+    Created directly so these tests don't depend on tmux_execute.
     The ``native_mcp_`` prefix makes the shell tools treat it as trusted/host.
     """
     import uuid
@@ -430,12 +426,9 @@ class TestTmuxTools:
         await call_error(client, "tmux_kill_session", {"session_name": "bad;name"})
         await call_error(client, "tmux_send_keys", {"session_name": "bad name", "keys": "x"})
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason="upstream race: tmux_execute sends C-c to the new pane before its shell "
-        "has started, killing it; reliably fails on GitHub runners, passes on fast machines",
-    )
     async def test_execute(self, client):
+        # Upstream failed this on every GitHub runner (C-c reached the pane
+        # before its shell started); fixed in unified_mcp_server.patches.
         session = "native_mcp_ci_exec"
         try:
             await client.call_tool("tmux_execute", {"command": "t_echo", "session_name": "ci_exec"})
