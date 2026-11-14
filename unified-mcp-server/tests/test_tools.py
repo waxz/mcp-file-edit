@@ -368,27 +368,69 @@ class TestShellTools:
         assert "Terminated 0" in await call(client, "terminate_all_processes")
 
 
+def _shell_wrapper(path: Path, body: str) -> str:
+    path.write_text(f"#!/bin/sh\n{body}\n")
+    path.chmod(0o755)
+    return str(path)
+
+
+@pytest.fixture
+def isolated_tmux(tmp_path, monkeypatch):
+    """Give each test its own tmux server, started with a chosen pane shell."""
+    sock_dir = tmp_path / "tmux-sock"
+    sock_dir.mkdir()
+    monkeypatch.setenv("TMUX_TMPDIR", str(sock_dir))
+    monkeypatch.delenv("TMUX", raising=False)
+
+    def use_shell(body: str) -> None:
+        monkeypatch.setenv("SHELL", _shell_wrapper(tmp_path / "pane-shell", body))
+
+    yield use_shell
+    import subprocess
+
+    subprocess.run(["tmux", "kill-server"], capture_output=True, check=False)
+
+
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed")
 class TestTmuxTools:
-    async def test_execute_capture_send_kill(self, client):
+    async def test_execute_capture_send_kill(self, client, isolated_tmux):
+        # tmux_execute sends C-c to the new pane immediately (see the race test
+        # below), so give the pane a shell that ignores SIGINT while starting.
+        isolated_tmux("trap '' INT\nexec bash --noprofile --norc")
         session = "native_mcp_ci_test"
         try:
             res = await client.call_tool("tmux_execute", {"command": "t_echo", "session_name": "ci_test"})
             assert session in "".join(getattr(c, "text", "") for c in res.content)
             output = ""
-            for _ in range(30):
+            for _ in range(50):
                 output = await call(client, "tmux_get_output", {"session_name": session})
                 if "hello-from-shell" in output.replace("echo hello-from-shell", ""):
                     break
                 await anyio.sleep(0.1)
-            assert "hello-from-shell" in output
+            assert "hello-from-shell" in output.replace("echo hello-from-shell", "")
             await call(client, "tmux_send_keys", {"session_name": session, "keys": "echo second-line"})
-            for _ in range(30):
+            for _ in range(50):
                 output = await call(client, "tmux_get_output", {"session_name": session})
                 if output.count("second-line") >= 2:
                     break
                 await anyio.sleep(0.1)
             assert output.count("second-line") >= 2
+        finally:
+            await client.call_tool("tmux_kill_session", {"session_name": session}, raise_on_error=False)
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="upstream race: tmux_execute sends C-c before the new pane's shell has "
+        "started, killing it (seen on GitHub runners)",
+    )
+    async def test_execute_survives_slow_shell_startup(self, client, isolated_tmux):
+        isolated_tmux("sleep 0.5\nexec bash --noprofile --norc")
+        session = "native_mcp_slow"
+        try:
+            await client.call_tool("tmux_execute", {"command": "t_echo", "session_name": "slow"})
+            await anyio.sleep(1.0)
+            output = await call(client, "tmux_get_output", {"session_name": session})
+            assert "hello-from-shell" in output.replace("echo hello-from-shell", "")
         finally:
             await client.call_tool("tmux_kill_session", {"session_name": session}, raise_on_error=False)
 
